@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PhishGuard</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+
+  <header class="pg-header">
+    <div class="pg-header-left">
+      <img src="icons/icon32.png" alt="" width="18" height="18" />
+      <span class="pg-title">PhishGuard</span>
+      <span class="pg-version">v2.0</span>
+    </div>
+    <a class="pg-settings-btn" id="btn-settings" title="Settings">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </a>
+  </header>
+
+  <div class="pg-status-bar" id="pg-status">
+    <span class="pg-dot active" id="pg-dot"></span>
+    <span class="pg-status-text" id="pg-status-text">Active — monitoring email</span>
+  </div>
+
+  <!-- Stats row -->
+  <div class="pg-stats-row">
+    <div class="pg-stat">
+      <div class="pg-stat-num" id="stat-total">0</div>
+      <div class="pg-stat-lbl">Scanned</div>
+    </div>
+    <div class="pg-stat-divider"></div>
+    <div class="pg-stat">
+      <div class="pg-stat-num warn" id="stat-suspicious">0</div>
+      <div class="pg-stat-lbl">Suspicious</div>
+    </div>
+    <div class="pg-stat-divider"></div>
+    <div class="pg-stat">
+      <div class="pg-stat-num danger" id="stat-high-risk">0</div>
+      <div class="pg-stat-lbl">High Risk</div>
+    </div>
+  </div>
+
+  <div class="pg-divider"></div>
+
+  <!-- Threat index -->
+  <div class="pg-threat-row">
+    <span class="pg-label">Threat Index</span>
+    <div class="pg-bar-track">
+      <div class="pg-bar-fill" id="pg-bar-fill"></div>
+    </div>
+    <span class="pg-threat-status" id="pg-threat-status">—</span>
+  </div>
+
+  <div class="pg-divider"></div>
+
+  <!-- Indicators -->
+  <div class="pg-block">
+    <div class="pg-block-label">Last Indicators</div>
+    <ul class="pg-indicators" id="pg-indicators-list">
+      <li class="pg-empty">No indicators recorded</li>
+    </ul>
+  </div>
+
+  <div class="pg-divider"></div>
+
+  <!-- Detection log -->
+  <div class="pg-block">
+    <div class="pg-block-header">
+      <span class="pg-block-label">Detection Log</span>
+      <div class="pg-actions">
+        <button class="pg-btn" id="btn-export-csv">Export CSV</button>
+        <button class="pg-btn danger" id="btn-clear-log">Clear</button>
+      </div>
+    </div>
+    <div class="pg-log" id="pg-log">
+      <p class="pg-empty">No entries</p>
+    </div>
+  </div>
+
+  <footer class="pg-footer">
+    <span id="last-scan">—</span>
+    <a href="https://github.com" target="_blank" class="pg-link">GitHub</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
