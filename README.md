@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="icons/icon128.png" alt="PhishGuard Logo" width="96" />
+
 # PhishGuard
 
 **Real-time phishing link detection for your email, built as a Chrome extension.**
