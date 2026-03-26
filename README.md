@@ -327,6 +327,7 @@ Every improvement shipped to this repository is documented in [`improvements/`](
 | 2026-03-24 | [RTL Override (RLO) & Bidi attack detection](./improvements/2026-03-24-rlo-bidi-attack-detection.md) |
 | 2026-03-24 | [Unicode NFKC normalization before all checks](./improvements/2026-03-24-unicode-normalization.md) |
 | 2026-03-25 | [IndexedDB persistent cache layer](./improvements/2026-03-25-indexeddb-persistent-cache.md) |
+| 2026-03-26 | [Failed API calls cached as unchecked (bug fix)](./improvements/2026-03-26-failed-api-calls-unchecked.md) |
 
 ---
 
@@ -358,7 +359,7 @@ The items below are planned for upcoming releases. Checked items are shipped.
 - [ ] "Mark as Safe" / "Confirm Phishing" feedback buttons on tooltips
 - [ ] Per-user domain allowlist via right-click context menu
 - [ ] Credential submission blocker: intercept `submit` event on flagged phishing forms
-- [ ] Failed API calls treated as "unchecked" rather than cached as "safe"
+- [x] Failed API calls treated as "unchecked" rather than cached as "safe"
 
 ### v3.0 - Enterprise
 - [ ] SIEM / SOC webhook: POST high-risk detections as JSON to a configurable endpoint

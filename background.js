@@ -15,12 +15,13 @@ import { idbGet, idbSet, idbPrune }         from './idb.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const FEED_TTL_MS      = 6  * 60 * 60 * 1000;  // 6 h  – OpenPhish refresh
-const RDAP_CACHE_TTL   = 24 * 60 * 60 * 1000;  // 24 h – RDAP per-domain cache
-const SB_CACHE_TTL     = 30 * 60 * 1000;        // 30 m – Safe Browsing cache
-const PT_CACHE_TTL     = 60 * 60 * 1000;        // 1 h  – PhishTank cache
-const NOTIFY_COOLDOWN  = 60 * 60 * 1000;        // 1 h  – dedup per domain
-const CACHE_PRUNE_MS   = 12 * 60 * 60 * 1000;  // 12 h – IDB pruning interval
+const FEED_TTL_MS      = 6  * 60 * 60 * 1000;  // 6 h  - OpenPhish refresh
+const RDAP_CACHE_TTL   = 24 * 60 * 60 * 1000;  // 24 h - RDAP per-domain cache
+const SB_CACHE_TTL     = 30 * 60 * 1000;        // 30 m - Safe Browsing cache
+const PT_CACHE_TTL     = 60 * 60 * 1000;        // 1 h  - PhishTank cache
+const NOTIFY_COOLDOWN  = 60 * 60 * 1000;        // 1 h  - dedup per domain
+const CACHE_PRUNE_MS   = 12 * 60 * 60 * 1000;  // 12 h - IDB pruning interval
+const FAIL_RETRY_TTL   =  5 * 60 * 1000;        // 5 m  - retry window after a failed API call
 
 // TLDs with reliable RDAP registry support
 const RDAP_SUPPORTED_TLDS = new Set([
@@ -115,7 +116,11 @@ async function checkGoogleSafeBrowsing(urls, apiKey) {
   const uncached  = [];
   for (let i = 0; i < urls.length; i++) {
     const hit = cacheHits[i];
-    if (hit && now - hit.cachedAt < SB_CACHE_TTL) {
+    if (hit?.failed) {
+      // Previous call failed. Retry once the short window expires; treat as unchecked in the meantime.
+      if (now - hit.cachedAt >= FAIL_RETRY_TTL) uncached.push(urls[i]);
+      // else: within retry window - skip this URL (unchecked, not assumed safe)
+    } else if (hit && now - hit.cachedAt < SB_CACHE_TTL) {
       if (hit.flagged) flagged.add(urls[i]);
     } else {
       uncached.push(urls[i]);
@@ -165,9 +170,10 @@ async function checkGoogleSafeBrowsing(urls, apiKey) {
     console.log(`[PhishGuard] Safe Browsing: checked ${uncached.length} URLs, ${flagged.size} flagged`);
   } catch (err) {
     console.warn('[PhishGuard] Safe Browsing API failed:', err.message);
-    // Cache negative results so we don't hammer the API on transient errors
+    // Cache as failed (not safe) so the next scan within 5 min treats these as unchecked,
+    // and retries the API after the retry window expires.
     await Promise.all(uncached.map(url =>
-      idbSet('safebrowsing', url, { flagged: false, cachedAt: now })
+      idbSet('safebrowsing', url, { failed: true, cachedAt: now })
     ));
   }
 
@@ -192,7 +198,13 @@ async function checkDomainAge(hostname) {
   const registeredDomain = parts.slice(-2).join('.');
 
   const cached = await idbGet('rdap', registeredDomain);
-  if (cached && Date.now() - cached.cachedAt < RDAP_CACHE_TTL) return cached.result;
+  const now    = Date.now();
+  if (cached?.failed) {
+    if (now - cached.cachedAt < FAIL_RETRY_TTL) return null; // unchecked, retry window active
+    // else fall through and retry
+  } else if (cached && now - cached.cachedAt < RDAP_CACHE_TTL) {
+    return cached.result;
+  }
 
   const store = async (result) => {
     await idbSet('rdap', registeredDomain, { result, cachedAt: Date.now() });
@@ -214,7 +226,7 @@ async function checkDomainAge(hostname) {
     const ageInDays = (Date.now() - new Date(regEvent.eventDate).getTime()) / 86_400_000;
     return store({ ageInDays, registeredDate: regEvent.eventDate, domain: registeredDomain });
   } catch (err) {
-    await idbSet('rdap', registeredDomain, { result: null, cachedAt: Date.now() });
+    await idbSet('rdap', registeredDomain, { failed: true, cachedAt: Date.now() });
     console.warn(`[PhishGuard] RDAP failed for ${registeredDomain}:`, err.message);
     return null;
   }
@@ -314,7 +326,12 @@ function isInThreatFeed(domain) {
 async function checkPhishTank(url, apiKey) {
   const now    = Date.now();
   const cached = await idbGet('phishtank', url);
-  if (cached && now - cached.cachedAt < PT_CACHE_TTL) return cached.flagged;
+  if (cached?.failed) {
+    if (now - cached.cachedAt < FAIL_RETRY_TTL) return false; // unchecked, retry window active
+    // else fall through and retry
+  } else if (cached && now - cached.cachedAt < PT_CACHE_TTL) {
+    return cached.flagged;
+  }
 
   try {
     const body = new URLSearchParams({ url, format: 'json' });
@@ -337,7 +354,7 @@ async function checkPhishTank(url, apiKey) {
     return flagged;
   } catch (err) {
     console.warn('[PhishGuard] PhishTank query failed:', err.message);
-    await idbSet('phishtank', url, { flagged: false, cachedAt: now });
+    await idbSet('phishtank', url, { failed: true, cachedAt: now });
     return false;
   }
 }
