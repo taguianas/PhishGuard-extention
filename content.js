@@ -13,6 +13,38 @@
   const SCAN_DEBOUNCE_MS = 600;
   const PROCESSED_ATTR   = 'data-phishguard-scanned';
   const BANNER_CLASS     = 'phishguard-scan-banner';
+  const AUTH_BANNER_ATTR = 'data-phishguard-auth';
+
+  /**
+   * Score penalty for each failed email authentication check.
+   * DMARC is weighted highest — a DMARC fail means the sending domain
+   * explicitly disavows the message, which is a strong spoofing signal.
+   */
+  const AUTH_FAIL_SCORES = { dmarc: 40, spf: 30, dkim: 25 };
+
+  /**
+   * DOM selectors for email header / metadata regions across Gmail,
+   * Outlook Web App, Yahoo Mail, and ProtonMail. We search these elements
+   * BEFORE the email body to locate "Authentication-Results" text without
+   * picking up false positives from body content that mentions these terms.
+   */
+  const AUTH_HEADER_SELECTORS = [
+    // Gmail: expanded sender detail rows / message header area
+    '.adn.ads',
+    '.gE.iv.gt',
+    '.ajA',
+    '.gs',
+    // Outlook Web App
+    '[class*="ReadingPaneHeader"]',
+    '[class*="MessageHeader"]',
+    // Yahoo Mail
+    '[data-test-id="message-view-header"]',
+    // ProtonMail
+    '[class*="HeaderTitle"]',
+  ];
+
+  /** Matches dmarc=<result>, spf=<result>, dkim=<result> in header text. */
+  const AUTH_RESULT_RE = /\b(dmarc|spf|dkim)=(\w+)/gi;
 
   /**
    * Email body selectors per platform — ordered from most to least specific.
@@ -381,6 +413,154 @@
   }
 
   // -------------------------------------------------------------------
+  // Email authentication header parsing (DMARC / SPF / DKIM)
+  // Reads "Authentication-Results" values from the email header DOM area.
+  // Searches OUTSIDE the email body to avoid false positives from
+  // body content that happens to mention these keywords.
+  // -------------------------------------------------------------------
+
+  /**
+   * Locate and parse email authentication results for the given email
+   * body container. Uses a two-phase strategy:
+   *
+   * Phase 1: query known header-area selectors. Elements that are inside
+   *          the body, or that contain the body, are skipped.
+   * Phase 2: walk up to 5 ancestor levels and inspect sibling branches
+   *          for any element whose text includes authentication keywords.
+   *
+   * @param {Element} container - email body element (e.g. .a3s.aiL)
+   * @returns {{ dmarc?: string, spf?: string, dkim?: string }|null}
+   */
+  function parseAuthResults(container) {
+    let headerText = '';
+    AUTH_RESULT_RE.lastIndex = 0;
+
+    // Phase 1: known header-area selectors
+    for (const sel of AUTH_HEADER_SELECTORS) {
+      for (const el of document.querySelectorAll(sel)) {
+        // Skip elements that are inside the body or that wrap it
+        if (container.contains(el) || el.contains(container)) continue;
+        headerText += (el.innerText || '') + '\n';
+      }
+    }
+
+    // Phase 2: walk ancestors and inspect sibling branches
+    if (!AUTH_RESULT_RE.test(headerText)) {
+      AUTH_RESULT_RE.lastIndex = 0;
+      let node = container.parentElement;
+      for (let depth = 0; depth < 5 && node; depth++, node = node.parentElement) {
+        for (const child of node.children) {
+          if (child.contains(container)) continue; // skip the branch containing the body
+          const text = child.innerText || '';
+          if (/\b(dmarc|spf|dkim)=/i.test(text)) headerText += text + '\n';
+        }
+        if (AUTH_RESULT_RE.test(headerText)) break;
+      }
+    }
+
+    AUTH_RESULT_RE.lastIndex = 0;
+    if (!headerText.trim()) return null;
+
+    const results = {};
+    let match;
+    while ((match = AUTH_RESULT_RE.exec(headerText)) !== null) {
+      const key = match[1].toLowerCase();
+      const val = match[2].toLowerCase();
+      // If the same check appears multiple times, keep the worst result
+      if (!results[key] || val === 'fail') results[key] = val;
+    }
+    AUTH_RESULT_RE.lastIndex = 0;
+
+    return Object.keys(results).length ? results : null;
+  }
+
+  /**
+   * Calculate the total risk score and the list of failure entries
+   * from a parsed auth result object.
+   * SPF softfail is treated as half the full SPF fail penalty (15 pts).
+   *
+   * @param {{ dmarc?: string, spf?: string, dkim?: string }} authResults
+   * @returns {{ score: number, entries: Array<{check, result, pts}> }}
+   */
+  function buildAuthRisk(authResults) {
+    let score = 0;
+    const entries = [];
+
+    for (const [check, result] of Object.entries(authResults)) {
+      const basePts = AUTH_FAIL_SCORES[check];
+      if (!basePts) continue;
+
+      if (result === 'fail') {
+        score += basePts;
+        entries.push({ check: check.toUpperCase(), result: 'fail', pts: basePts });
+      } else if (result === 'softfail' && check === 'spf') {
+        const pts = Math.round(basePts / 2);
+        score += pts;
+        entries.push({ check: 'SPF', result: 'softfail', pts });
+      }
+      // pass / none / neutral / permerror → no penalty
+    }
+
+    return { score, entries };
+  }
+
+  /**
+   * Inject an email authentication warning banner at the top of the
+   * email container. The scan banner's later prepend will naturally
+   * place itself above this one, giving the ordering:
+   *   [URL scan results banner]   <- top, action-focused
+   *   [Auth failure banner]       <- below, contextual
+   *
+   * @param {Element} container
+   * @param {Array<{check, result, pts}>} entries - failed checks only
+   * @param {number} totalScore
+   */
+  function injectAuthBanner(container, entries, totalScore) {
+    if (!entries.length) return;
+
+    const isCritical = totalScore >= 40;
+    const accentColor = isCritical ? '#c0392b' : '#b87333';
+    const borderColor = isCritical ? '#4a2020' : '#4a3820';
+
+    const pills = entries.map(({ check, result, pts }) =>
+      `<span style="display:inline-flex;align-items:center;gap:3px;` +
+      `margin:0 4px 2px 0;padding:1px 7px;background:#111214;` +
+      `border:1px solid ${borderColor};border-radius:2px;white-space:nowrap">` +
+      `<span style="font-weight:700;font-size:10px;color:${accentColor}">${escapeHTML(check)}</span>` +
+      `<span style="color:#3a3e48;font-size:9px;margin:0 1px">|</span>` +
+      `<span style="font-size:10px;color:#c8ccd4;text-transform:uppercase">${escapeHTML(result)}</span>` +
+      `<span style="font-size:9px;color:#5a6272;margin-left:3px">+${pts}pts</span>` +
+      `</span>`
+    ).join('');
+
+    const advice = isCritical
+      ? 'Authentication failures may indicate spoofing or a forged sender. Do not trust this email.'
+      : 'Partial authentication failure. Verify the sender before acting on this email.';
+
+    const banner = document.createElement('div');
+    banner.setAttribute(AUTH_BANNER_ATTR, 'true');
+    banner.style.cssText = [
+      'display:block', 'margin:0 0 6px 0', 'padding:7px 12px',
+      'background:#141517', `border:1px solid ${borderColor}`,
+      `border-left:3px solid ${accentColor}`, 'border-radius:0 3px 3px 0',
+      'font-family:Segoe UI,system-ui,sans-serif', 'font-size:11.5px',
+      'color:#8a9ab0', 'line-height:1.5', 'box-sizing:border-box', 'max-width:100%',
+    ].join(';');
+    banner.innerHTML =
+      `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">` +
+        `<span style="color:${accentColor};font-weight:600;font-size:10px;` +
+          `text-transform:uppercase;letter-spacing:.07em;white-space:nowrap">PhishGuard</span>` +
+        `<span style="color:#2a2e38;user-select:none"> │ </span>` +
+        `<span>Email authentication failed — risk score` +
+          `<strong style="color:${accentColor};margin-left:4px">+${totalScore}</strong></span>` +
+      `</div>` +
+      `<div style="margin-bottom:5px">${pills}</div>` +
+      `<div style="font-size:10.5px;color:#5a6272">${escapeHTML(advice)}</div>`;
+
+    container.prepend(banner);
+  }
+
+  // -------------------------------------------------------------------
   // Per-email scan banner
   // -------------------------------------------------------------------
 
@@ -461,6 +641,17 @@
     scanFormsInContainers(containers);
 
     for (const container of containers) {
+      // Auth header check (synchronous DOM scan, once per container)
+      // Runs before the links guard so emails with no links are still checked.
+      if (!container.hasAttribute(AUTH_BANNER_ATTR)) {
+        container.setAttribute(AUTH_BANNER_ATTR, 'done');
+        const authResults = parseAuthResults(container);
+        if (authResults) {
+          const { score, entries } = buildAuthRisk(authResults);
+          if (entries.length) injectAuthBanner(container, entries, score);
+        }
+      }
+
       const links = extractLinks(container);
       if (!links.length) continue;
 

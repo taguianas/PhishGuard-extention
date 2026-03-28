@@ -328,6 +328,7 @@ Every improvement shipped to this repository is documented in [`improvements/`](
 | 2026-03-24 | [Unicode NFKC normalization before all checks](./improvements/2026-03-24-unicode-normalization.md) |
 | 2026-03-25 | [IndexedDB persistent cache layer](./improvements/2026-03-25-indexeddb-persistent-cache.md) |
 | 2026-03-26 | [Failed API calls cached as unchecked (bug fix)](./improvements/2026-03-26-failed-api-calls-unchecked.md) |
+| 2026-03-28 | [DMARC / SPF / DKIM header parsing](./improvements/2026-03-28-dmarc-spf-dkim-header-parsing.md) |
 
 ---
 
