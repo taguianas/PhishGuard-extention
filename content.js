@@ -285,10 +285,99 @@
       'color:#c8ccd4', 'line-height:1.5',
     ].join(';');
     banner.innerHTML =
-      `<strong style="color:#c0392b;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">PhishGuard — Suspicious Form</strong><br>` +
+      `<strong style="color:#c0392b;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">PhishGuard - Suspicious Form</strong><br>` +
       `This email contains a form that submits data to <code style="font-family:Consolas,monospace;color:#8ab4f8">${escapeHTML(externalDomain)}</code>. ` +
       `Do not enter any credentials.`;
     form.parentNode.insertBefore(banner, form);
+
+    // Intercept submission and require explicit user confirmation
+    attachSubmitBlocker(form, externalDomain);
+  }
+
+  /**
+   * Attach a capture-phase submit listener that blocks the form and shows
+   * a modal dialog. The user must actively choose "Submit Anyway" to proceed.
+   * Using capture phase ensures we fire before any inline onsubmit handlers.
+   */
+  function attachSubmitBlocker(form, externalDomain) {
+    function handleSubmit(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      showSubmitBlockerDialog(externalDomain, () => {
+        // User confirmed - remove blocker so form.submit() goes through cleanly
+        form.removeEventListener('submit', handleSubmit, true);
+        form.submit();
+      });
+    }
+    form.addEventListener('submit', handleSubmit, true);
+  }
+
+  /**
+   * Show a full-screen blocking modal when a flagged form is submitted.
+   * Closes on: Cancel button, overlay click, or Escape key.
+   * Only calls onConfirm() if the user explicitly clicks "Submit Anyway".
+   */
+  function showSubmitBlockerDialog(externalDomain, onConfirm) {
+    document.getElementById('phishguard-dialog-overlay')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'phishguard-dialog-overlay';
+    overlay.innerHTML = `
+      <div class="phishguard-dialog" role="alertdialog"
+           aria-modal="true" aria-labelledby="pg-dlg-title" aria-describedby="pg-dlg-desc">
+        <div class="phishguard-dialog-header">
+          <span class="phishguard-verdict" id="pg-dlg-title">Credential Submission Blocked</span>
+          <span class="phishguard-score-pill">PhishGuard</span>
+        </div>
+        <div class="phishguard-dialog-body" id="pg-dlg-desc">
+          <p class="phishguard-dlg-lead">
+            This form is attempting to send your data to an external domain:
+          </p>
+          <div class="phishguard-dlg-domain">${escapeHTML(externalDomain)}</div>
+          <p class="phishguard-dlg-detail">
+            Forms embedded in emails are a common credential-harvesting technique.
+            Submitting could expose your username, password, or other sensitive data to attackers.
+          </p>
+          <ul class="phishguard-dlg-reasons">
+            <li>Form destination does not match this mail provider</li>
+            <li>Legitimate services never request credentials via email forms</li>
+            <li>Submission target: <code>${escapeHTML(externalDomain)}</code></li>
+          </ul>
+        </div>
+        <div class="phishguard-dialog-actions">
+          <button class="phishguard-btn-safe" id="pg-btn-cancel">Cancel (Stay Safe)</button>
+          <button class="phishguard-btn-risk" id="pg-btn-proceed">Submit Anyway</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    // Focus the safe button immediately for keyboard users
+    overlay.querySelector('#pg-btn-cancel').focus();
+
+    overlay.querySelector('#pg-btn-cancel').addEventListener('click', () => {
+      overlay.remove();
+    });
+
+    overlay.querySelector('#pg-btn-proceed').addEventListener('click', () => {
+      overlay.remove();
+      onConfirm();
+    });
+
+    // Dismiss on backdrop click
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) overlay.remove();
+    });
+
+    // Dismiss on Escape
+    function onKeydown(e) {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', onKeydown);
+      }
+    }
+    document.addEventListener('keydown', onKeydown);
   }
 
   // -------------------------------------------------------------------
