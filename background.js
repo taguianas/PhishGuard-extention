@@ -383,6 +383,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     handleAnalyzeURLs(msg.urls).then(sendResponse);
     return true;
   }
+  if (msg.type === 'ANALYZE_SENDER') {
+    handleAnalyzeSender(msg.domain).then(sendResponse);
+    return true;
+  }
   if (msg.type === 'GET_STATS') {
     chrome.storage.local.get(['phishguard_stats'], d =>
       sendResponse(d.phishguard_stats || defaultStats()));
@@ -469,6 +473,45 @@ async function handleAnalyzeURLs(urls) {
 
   await updateStats(results);
   return results;
+}
+
+// ─── Sender Domain Analysis ───────────────────────────────────────────────────
+
+/**
+ * Run heuristic + feed + RDAP checks on a sender's email domain.
+ * Skips Safe Browsing, PhishTank, and URLHaus — those APIs expect full URLs
+ * and would waste quota on domain-only input that often returns nothing useful.
+ *
+ * @param {string} domain - registered domain extracted from the From: header
+ * @returns {object|null} - same shape as a single analyzeURL() result, or null
+ */
+async function handleAnalyzeSender(domain) {
+  if (!domain || !domain.includes('.')) return null;
+
+  // Construct a minimal URL so the existing heuristic engine can parse it
+  const analysis = analyzeURL(`https://${domain}/`);
+  if (!analysis) return null;
+
+  // Layer 1: OpenPhish community feed (domain-level hit is directly relevant)
+  await refreshFeedIfNeeded();
+  if (isInThreatFeed(domain)) {
+    analysis.indicators.push({ score: 50, label: 'Sender domain in threat intelligence feed (OpenPhish)' });
+    analysis.score     = Math.min(analysis.score + 50, 100);
+    analysis.riskLevel = 'high-risk';
+  }
+
+  // Layer 2: RDAP domain age — a brand-new domain impersonating a bank is a
+  // very strong signal; skip if already max-scored or feed-flagged.
+  if (!analysis.threatFeedHit && analysis.score > 0) {
+    const settings = await loadSettings();
+    if (settings.domainAgeEnabled) {
+      const ageInfo = await checkDomainAge(domain);
+      applyDomainAgeScore(analysis, ageInfo);
+      if (ageInfo) analysis.domainAge = ageInfo;
+    }
+  }
+
+  return analysis;
 }
 
 // ─── Stats & Badge Update ─────────────────────────────────────────────────────

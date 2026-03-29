@@ -13,7 +13,8 @@
   const SCAN_DEBOUNCE_MS = 600;
   const PROCESSED_ATTR   = 'data-phishguard-scanned';
   const BANNER_CLASS     = 'phishguard-scan-banner';
-  const AUTH_BANNER_ATTR = 'data-phishguard-auth';
+  const AUTH_BANNER_ATTR   = 'data-phishguard-auth';
+  const SENDER_BANNER_ATTR = 'data-phishguard-sender';
 
   /**
    * Score penalty for each failed email authentication check.
@@ -561,6 +562,146 @@
   }
 
   // -------------------------------------------------------------------
+  // Sender domain impersonation detection
+  // Extracts the From: email domain and runs it through the heuristic
+  // engine in background.js (ANALYZE_SENDER message type).
+  // -------------------------------------------------------------------
+
+  /**
+   * Extract the sender's email domain from the DOM surrounding a given
+   * email body container. Never reads inside the body itself.
+   *
+   * Three fallback approaches:
+   *   1. Gmail's .gD[email] attribute — most reliable for Gmail.
+   *   2. Email-address pattern in known header-area selectors.
+   *   3. "From:" pattern in sibling branches of the container's ancestors.
+   *
+   * @param {Element} container - email body element
+   * @returns {string|null} lowercase domain, e.g. "paypa1.com"
+   */
+  function extractSenderDomain(container) {
+    // Approach 1: Gmail renders the sender as <span class="gD" email="x@y.z">
+    let node = container.parentElement;
+    for (let depth = 0; depth < 8 && node && node.tagName !== 'BODY'; depth++, node = node.parentElement) {
+      const gd = node.querySelector('.gD[email]');
+      if (gd && !container.contains(gd)) {
+        const raw = (gd.getAttribute('email') || '').toLowerCase();
+        const domain = raw.split('@')[1];
+        if (domain && domain.includes('.')) return domain;
+      }
+      // Stop climbing at a known high-level Gmail wrapper to avoid
+      // picking up the sender from a different message in the thread
+      if (node.classList.contains('nH') || node.classList.contains('adO')) break;
+    }
+
+    // Approach 2: email-address pattern in known header-region selectors
+    for (const sel of AUTH_HEADER_SELECTORS) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (container.contains(el) || el.contains(container)) continue;
+        const match = (el.innerText || '').match(/<?([\w.+%-]+@([\w.-]+\.[a-z]{2,}))>?/i);
+        if (match) return match[2].toLowerCase();
+      }
+    }
+
+    // Approach 3: walk ancestors, inspect sibling branches for "From:" line
+    node = container.parentElement;
+    for (let depth = 0; depth < 5 && node; depth++, node = node.parentElement) {
+      for (const child of node.children) {
+        if (child.contains(container)) continue;
+        const fromMatch = (child.innerText || '').match(/from:.*?<?([\w.+%-]+@([\w.-]+\.[a-z]{2,}))>?/i);
+        if (fromMatch) return fromMatch[2].toLowerCase();
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Send the sender domain to background for heuristic + feed + RDAP analysis.
+   * Sets SENDER_BANNER_ATTR immediately so this only ever runs once per container.
+   *
+   * @param {Element} container
+   * @returns {{ result: object, domain: string }|null}
+   */
+  async function analyzeSenderDomain(container) {
+    if (container.hasAttribute(SENDER_BANNER_ATTR)) return null;
+    container.setAttribute(SENDER_BANNER_ATTR, 'done');
+
+    const domain = extractSenderDomain(container);
+    if (!domain) return null;
+
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'ANALYZE_SENDER', domain });
+      return result ? { result, domain } : null;
+    } catch (err) {
+      console.warn('[PhishGuard] Sender analysis failed:', err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Inject a sender impersonation warning banner into the email container.
+   * Only called when riskLevel is 'suspicious' or 'high-risk'.
+   *
+   * The scan banner's later prepend will appear above this one, giving
+   * the correct top-to-bottom order:
+   *   [URL scan banner]      <- most actionable
+   *   [Sender warning]       <- identity context
+   *   [Auth failure banner]  <- authentication context
+   *
+   * @param {Element} container
+   * @param {object} analysis  - analyzeURL() result from background
+   * @param {string} domain    - the extracted sender domain
+   */
+  function injectSenderWarning(container, analysis, domain) {
+    if (analysis.riskLevel === 'safe') return;
+
+    const isCritical  = analysis.riskLevel === 'high-risk';
+    const accentColor = isCritical ? '#c0392b' : '#b87333';
+    const borderColor = isCritical ? '#4a2020' : '#4a3820';
+
+    const indicatorLines = (analysis.indicators || [])
+      .slice(0, 4)  // cap at 4 to keep banner compact
+      .map(i => `<li style="font-size:11px;color:#c8ccd4;padding:2px 0 2px 10px;` +
+                `margin-bottom:2px;border-left:2px solid #3a3c40;line-height:1.4">` +
+                `${escapeHTML(i.label)}</li>`)
+      .join('');
+
+    const verdict = isCritical ? 'Sender Domain — High Risk' : 'Sender Domain — Suspicious';
+    const advice  = isCritical
+      ? 'This sender domain appears to impersonate a known brand. Do not trust links or attachments.'
+      : 'The sender domain has suspicious characteristics. Verify the sender before acting.';
+
+    const banner = document.createElement('div');
+    banner.setAttribute(SENDER_BANNER_ATTR, 'warning');
+    banner.style.cssText = [
+      'display:block', 'margin:0 0 6px 0', 'padding:8px 12px',
+      'background:#141517', `border:1px solid ${borderColor}`,
+      `border-left:3px solid ${accentColor}`, 'border-radius:0 3px 3px 0',
+      'font-family:Segoe UI,system-ui,sans-serif', 'font-size:11.5px',
+      'color:#8a9ab0', 'line-height:1.5', 'box-sizing:border-box', 'max-width:100%',
+    ].join(';');
+    banner.innerHTML =
+      `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">` +
+        `<span style="color:${accentColor};font-weight:600;font-size:10px;` +
+          `text-transform:uppercase;letter-spacing:.07em;white-space:nowrap">PhishGuard</span>` +
+        `<span style="color:#2a2e38;user-select:none"> │ </span>` +
+        `<span>${escapeHTML(verdict)}</span>` +
+        `<span style="margin-left:auto;font-family:Consolas,monospace;font-size:10px;` +
+          `color:${accentColor};background:#111214;border:1px solid ${borderColor};` +
+          `border-radius:2px;padding:1px 6px">${analysis.score}/100</span>` +
+      `</div>` +
+      `<div style="font-family:Consolas,monospace;font-size:11.5px;color:#8ab4f8;` +
+        `margin-bottom:6px">${escapeHTML(domain)}</div>` +
+      (indicatorLines
+        ? `<ul style="list-style:none;margin:0 0 6px;padding:0">${indicatorLines}</ul>`
+        : '') +
+      `<div style="font-size:10.5px;color:${isCritical ? '#a93226' : '#5a6272'}">${escapeHTML(advice)}</div>`;
+
+    container.prepend(banner);
+  }
+
+  // -------------------------------------------------------------------
   // Per-email scan banner
   // -------------------------------------------------------------------
 
@@ -652,8 +793,18 @@
         }
       }
 
+      // Sender domain impersonation check (async, once per container).
+      // Runs in parallel with link extraction; awaited before URL results
+      // so all banners are prepended in the correct top-to-bottom order.
+      const senderPromise = analyzeSenderDomain(container);
+
       const links = extractLinks(container);
-      if (!links.length) continue;
+      if (!links.length) {
+        // No links, but still surface a sender warning if found
+        const senderData = await senderPromise;
+        if (senderData?.result) injectSenderWarning(container, senderData.result, senderData.domain);
+        continue;
+      }
 
       // ── Bidi display-text pre-scan (synchronous, no network) ────────────────
       // The URL analyzer only receives the href; it cannot see anchor display text.
@@ -702,6 +853,12 @@
           markSafe(element);
         }
       }
+
+      // Await sender analysis BEFORE injecting the scan banner so that the
+      // scan banner's prepend is the last one, keeping it at the visual top.
+      // Final order (top to bottom): scan banner → sender warning → auth banner.
+      const senderData = await senderPromise;
+      if (senderData?.result) injectSenderWarning(container, senderData.result, senderData.domain);
 
       // Inject / refresh the per-email summary banner
       injectScanBanner(container);
