@@ -258,6 +258,82 @@ function checkIDNHomograph(hostname) {
   return hostname.toLowerCase().split('.').some(label => label.startsWith('xn--'));
 }
 
+/**
+ * RFC 3492 Punycode decoder — converts a single xn-- label to its Unicode form.
+ * Returns the original label unchanged if decoding fails or no xn-- prefix is present.
+ * Implemented inline so urlAnalyzer.js stays a self-contained ES module with no deps.
+ */
+function decodePunycodeLabel(label) {
+  const lower = label.toLowerCase();
+  if (!lower.startsWith('xn--')) return label;
+  const code = lower.slice(4); // strip "xn--" prefix
+
+  // Punycode constants (RFC 3492)
+  const BASE = 36, TMIN = 1, TMAX = 26, SKEW = 38, DAMP = 700;
+  const INITIAL_BIAS = 72, INITIAL_N = 128;
+
+  function adapt(delta, numPoints, firstTime) {
+    delta = firstTime ? Math.floor(delta / DAMP) : delta >> 1;
+    delta += Math.floor(delta / numPoints);
+    let k = 0;
+    while (delta > Math.floor(((BASE - TMIN) * TMAX) / 2)) {
+      delta = Math.floor(delta / (BASE - TMIN));
+      k += BASE;
+    }
+    return k + Math.floor(((BASE - TMIN + 1) * delta) / (delta + SKEW));
+  }
+
+  function digitOf(c) {
+    const v = c.charCodeAt(0);
+    if (v - 48 < 10)  return v - 22; // '0'-'9' -> 26-35
+    if (v - 65 < 26)  return v - 65; // 'A'-'Z' -> 0-25
+    if (v - 97 < 26)  return v - 97; // 'a'-'z' -> 0-25
+    return BASE;
+  }
+
+  try {
+    const delimIdx = code.lastIndexOf('-');
+    const basicPart = delimIdx >= 0 ? code.slice(0, delimIdx) : '';
+    const extPart   = delimIdx >= 0 ? code.slice(delimIdx + 1) : code;
+
+    const output = [...basicPart].map(c => c.charCodeAt(0));
+    let i = 0, n = INITIAL_N, bias = INITIAL_BIAS;
+    let pos = 0;
+
+    while (pos < extPart.length) {
+      const oldi = i;
+      let w = 1;
+      for (let k = BASE; ; k += BASE) {
+        if (pos >= extPart.length) throw new Error('overflow');
+        const digit = digitOf(extPart[pos++]);
+        if (digit >= BASE) throw new Error('bad digit');
+        i += digit * w;
+        const t = k <= bias ? TMIN : k >= bias + TMAX ? TMAX : k - bias;
+        if (digit < t) break;
+        w *= BASE - t;
+      }
+      const outLen = output.length + 1;
+      bias = adapt(i - oldi, outLen, oldi === 0);
+      n += Math.floor(i / outLen);
+      i %= outLen;
+      output.splice(i, 0, n);
+      i++;
+    }
+
+    return output.map(cp => String.fromCodePoint(cp)).join('');
+  } catch (_) {
+    return label; // malformed Punycode - return as-is
+  }
+}
+
+/**
+ * Decode all xn-- labels in a hostname to their Unicode forms.
+ * e.g. "xn--pypl-ppa8b.com" -> "pаypal.com" (Cyrillic а)
+ */
+function decodeIDNHostname(hostname) {
+  return hostname.toLowerCase().split('.').map(decodePunycodeLabel).join('.');
+}
+
 // ─── NEW CHECK 2 ─────────────────────────────────────────────────────────────
 /**
  * Dangerous file extension in URL path.
@@ -430,7 +506,8 @@ export function analyzeURL(rawUrl) {
         domain: cleanDisplay,
         score: 75,
         riskLevel: 'high-risk',
-        indicators: [SCORING.RLO_ATTACK],
+        indicators: [{ ...SCORING.RLO_ATTACK,
+          label: `Bidi/RLO attack: URL contains direction-reversal characters - visually appears as "${cleanDisplay}"` }],
       };
     }
     return null;
@@ -466,7 +543,11 @@ export function analyzeURL(rawUrl) {
   // whose parsed hostname resolves to a trusted domain (e.g. google.com) while bidi
   // chars in the raw string make it visually appear as a different, malicious domain.
   // Without this guard, the trusted-domain exit would whitelist such a URL.
-  if (hasRLO) add(SCORING.RLO_ATTACK);
+  if (hasRLO) {
+    const cleanDisplay = rawUrl.replace(BIDI_CONTROL_RE, '').slice(0, 80);
+    add({ ...SCORING.RLO_ATTACK,
+          label: `Bidi/RLO attack: URL contains direction-reversal characters - visually appears as "${cleanDisplay}"` });
+  }
 
   // ── 0b. Unicode compatibility character (NFKC normalization) attack ───────
   // Same placement rationale as RLO: ｇｏｏｇｌｅ.com parses to google.com via
@@ -563,8 +644,20 @@ export function analyzeURL(rawUrl) {
 
   // ── 12. IDN / Punycode homograph ─────────────────────────────────────────
   // xn-- labels are ASCII — normHostname and hostname behave the same here.
-  if (checkIDNHomograph(normHostname))
-    add(SCORING.IDN_PUNYCODE);
+  // Decode to Unicode and compare against known brands for a specific label.
+  if (checkIDNHomograph(normHostname)) {
+    const unicodeForm = decodeIDNHostname(normHostname);
+    // Find any brand the decoded hostname resembles (after stripping its own xn-- labels)
+    const unicodeRegistered = unicodeForm.split('.').slice(-2).join('.');
+    const impCheck = checkDomainImpersonation(unicodeRegistered);
+    let idnLabel;
+    if (impCheck.detected) {
+      idnLabel = `Punycode IDN homograph: appears as "${unicodeForm}" - resembles "${impCheck.brand}"`;
+    } else {
+      idnLabel = `Punycode IDN homograph: appears as "${unicodeForm}" (xn-- encoded internationalized domain)`;
+    }
+    add({ ...SCORING.IDN_PUNYCODE, label: idnLabel });
+  }
 
   // ── 13. Dangerous file extension in path ─────────────────────────────────
   // normPathname: fullwidth extension chars (e.g. ．ｅｘｅ) collapse to .exe

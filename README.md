@@ -330,6 +330,8 @@ Every improvement shipped to this repository is documented in [`improvements/`](
 | 2026-03-26 | [Failed API calls cached as unchecked (bug fix)](./improvements/2026-03-26-failed-api-calls-unchecked.md) |
 | 2026-03-28 | [DMARC / SPF / DKIM header parsing](./improvements/2026-03-28-dmarc-spf-dkim-header-parsing.md) |
 | 2026-03-29 | [Sender domain impersonation detection](./improvements/2026-03-29-sender-domain-impersonation.md) |
+| 2026-04-01 | [RLO + Punycode visual comparison in indicator labels](./improvements/2026-04-01-rlo-punycode-visual-comparison.md) |
+| 2026-04-06 | [QR code extraction via BarcodeDetector API](./improvements/2026-04-06-qr-code-extraction.md) |
 
 ---
 
@@ -351,10 +353,11 @@ The items below are planned for upcoming releases. Checked items are shipped.
 - [x] Trusted-domain bypass prevention for RLO / Unicode spoofing attacks
 
 ### v2.1 - New Detection Layers
-- [ ] Parse Gmail / Outlook authentication result headers (DMARC / SPF / DKIM `fail` signals)
-- [ ] Sender domain impersonation scoring (heuristic analysis of the `From:` domain)
+- [x] Parse Gmail / Outlook authentication result headers (DMARC / SPF / DKIM `fail` signals)
+- [x] Sender domain impersonation scoring (heuristic analysis of the `From:` domain)
+- [x] RLO + Punycode visual comparison in indicator labels
+- [x] QR code extraction from email images via browser `BarcodeDetector` API
 - [ ] VirusTotal URL lookup integration (optional, free tier: 4 req/min)
-- [ ] QR code extraction from email images via browser `BarcodeDetector` API
 
 ### v2.2 - UX & Accuracy
 - [ ] Score contribution breakdown in tooltips (e.g. "Brand in subdomain: +65 pts")

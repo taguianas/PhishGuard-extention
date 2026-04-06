@@ -15,6 +15,10 @@
   const BANNER_CLASS     = 'phishguard-scan-banner';
   const AUTH_BANNER_ATTR   = 'data-phishguard-auth';
   const SENDER_BANNER_ATTR = 'data-phishguard-sender';
+  const QR_BANNER_ATTR     = 'data-phishguard-qr';
+
+  /** Minimum image dimension (px) to attempt QR scanning — skips tracking pixels. */
+  const QR_MIN_SIZE = 50;
 
   /**
    * Score penalty for each failed email authentication check.
@@ -702,6 +706,125 @@
   }
 
   // -------------------------------------------------------------------
+  // QR Code detection (BarcodeDetector API, Chrome 83+)
+  // -------------------------------------------------------------------
+
+  /**
+   * Inject a banner listing QR-embedded URLs that failed the risk check.
+   *
+   * @param {Element} container   - email body container
+   * @param {object[]} flagged    - analyzeURL results with riskLevel !== 'safe'
+   * @param {number}   totalFound - total QR URLs detected (including safe ones)
+   */
+  function injectQRBanner(container, flagged, totalFound) {
+    const isHigh = flagged.some(r => r.riskLevel === 'high-risk');
+    const color  = isHigh ? '#c0392b' : '#b87333';
+    const border = isHigh ? '#4a2020' : '#4a3820';
+    const verdict = isHigh ? 'QR Code — High Risk' : 'QR Code — Suspicious';
+
+    const domainLines = flagged.slice(0, 4).map(r =>
+      `<li style="font-size:11px;color:#c8ccd4;padding:2px 0 2px 10px;` +
+      `margin-bottom:2px;border-left:2px solid #3a3c40;line-height:1.4">` +
+      `${escapeHTML(r.domain)} <span style="color:${color};font-size:10px">` +
+      `[${r.score}/100]</span></li>`
+    ).join('');
+
+    const advice = isHigh
+      ? 'A QR code in this email leads to a high-risk URL. Do not scan it with your phone.'
+      : 'A QR code in this email leads to a suspicious URL. Verify the destination before scanning.';
+
+    const banner = document.createElement('div');
+    banner.setAttribute(QR_BANNER_ATTR, 'warning');
+    banner.style.cssText = [
+      'display:block', 'margin:0 0 6px 0', 'padding:8px 12px',
+      'background:#141517', `border:1px solid ${border}`,
+      `border-left:3px solid ${color}`, 'border-radius:0 3px 3px 0',
+      'font-family:Segoe UI,system-ui,sans-serif', 'font-size:11.5px',
+      'color:#8a9ab0', 'line-height:1.5', 'box-sizing:border-box', 'max-width:100%',
+    ].join(';');
+    banner.innerHTML =
+      `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">` +
+        `<span style="color:${color};font-weight:600;font-size:10px;` +
+          `text-transform:uppercase;letter-spacing:.07em;white-space:nowrap">PhishGuard</span>` +
+        `<span style="color:#2a2e38;user-select:none"> │ </span>` +
+        `<span>${escapeHTML(verdict)}</span>` +
+        `<span style="margin-left:auto;font-family:Consolas,monospace;font-size:10px;` +
+          `color:${color};background:#111214;border:1px solid ${border};` +
+          `border-radius:2px;padding:1px 6px">${flagged.length}/${totalFound} risky</span>` +
+      `</div>` +
+      `<ul style="list-style:none;margin:0 0 6px;padding:0">${domainLines}</ul>` +
+      `<div style="font-size:10.5px;color:${isHigh ? '#a93226' : '#5a6272'}">${escapeHTML(advice)}</div>`;
+
+    container.prepend(banner);
+  }
+
+  /**
+   * Use the BarcodeDetector API to scan all images in a container for QR codes.
+   * Any QR-encoded URL is sent through the full ANALYZE_URLS pipeline. If any
+   * result is flagged, a warning banner is injected.
+   *
+   * - Skips containers already scanned (QR_BANNER_ATTR guard).
+   * - Skips images smaller than QR_MIN_SIZE (tracking pixels, icons).
+   * - Silently ignores cross-origin SecurityErrors per image.
+   * - No-ops on browsers without BarcodeDetector or without qr_code format support.
+   *
+   * @param {Element} container
+   */
+  async function scanQRCodesInContainer(container) {
+    if (container.hasAttribute(QR_BANNER_ATTR)) return;
+    // BarcodeDetector is Chrome 83+; gracefully degrade on unsupported browsers
+    if (typeof BarcodeDetector === 'undefined') return;
+
+    container.setAttribute(QR_BANNER_ATTR, 'done');
+
+    let detector;
+    try {
+      const formats = await BarcodeDetector.getSupportedFormats();
+      if (!formats.includes('qr_code')) return;
+      detector = new BarcodeDetector({ formats: ['qr_code'] });
+    } catch {
+      return;
+    }
+
+    // Only scan images that are fully loaded and large enough to be QR codes
+    const images = [...container.querySelectorAll('img')].filter(img =>
+      img.complete && img.naturalWidth >= QR_MIN_SIZE && img.naturalHeight >= QR_MIN_SIZE
+    );
+    if (!images.length) return;
+
+    const urlRE = /^https?:\/\//i;
+    const qrURLs = [];
+
+    for (const img of images) {
+      try {
+        const codes = await detector.detect(img);
+        for (const code of codes) {
+          const raw = (code.rawValue || '').trim();
+          if (urlRE.test(raw)) qrURLs.push(raw);
+        }
+      } catch {
+        // SecurityError for tainted cross-origin images, or decode failure — skip
+      }
+    }
+
+    if (!qrURLs.length) return;
+
+    let results;
+    try {
+      results = await chrome.runtime.sendMessage({ type: 'ANALYZE_URLS', urls: qrURLs });
+    } catch {
+      return;
+    }
+
+    if (!Array.isArray(results)) return;
+
+    const flagged = results.filter(r => r.riskLevel !== 'safe');
+    if (!flagged.length) return;
+
+    injectQRBanner(container, flagged, qrURLs.length);
+  }
+
+  // -------------------------------------------------------------------
   // Per-email scan banner
   // -------------------------------------------------------------------
 
@@ -798,11 +921,16 @@
       // so all banners are prepended in the correct top-to-bottom order.
       const senderPromise = analyzeSenderDomain(container);
 
+      // QR code scan runs in parallel — BarcodeDetector is async but fast.
+      // Awaited before scan banner so banner prepend order is preserved.
+      const qrPromise = scanQRCodesInContainer(container);
+
       const links = extractLinks(container);
       if (!links.length) {
-        // No links, but still surface a sender warning if found
+        // No links, but still surface sender + QR warnings if found
         const senderData = await senderPromise;
         if (senderData?.result) injectSenderWarning(container, senderData.result, senderData.domain);
+        await qrPromise;
         continue;
       }
 
@@ -854,11 +982,12 @@
         }
       }
 
-      // Await sender analysis BEFORE injecting the scan banner so that the
-      // scan banner's prepend is the last one, keeping it at the visual top.
-      // Final order (top to bottom): scan banner → sender warning → auth banner.
+      // Await sender + QR analysis BEFORE injecting the scan banner so that
+      // the scan banner's prepend is the last one, keeping it at the visual top.
+      // Final order (top to bottom): scan banner -> QR banner -> sender warning -> auth banner.
       const senderData = await senderPromise;
       if (senderData?.result) injectSenderWarning(container, senderData.result, senderData.domain);
+      await qrPromise;
 
       // Inject / refresh the per-email summary banner
       injectScanBanner(container);
