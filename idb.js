@@ -14,10 +14,10 @@
  */
 
 const DB_NAME    = 'phishguard-cache';
-const DB_VERSION = 1;
-const STORES     = ['rdap', 'safebrowsing', 'phishtank', 'notifications'];
+const DB_VERSION = 2;
+const STORES     = ['rdap', 'safebrowsing', 'phishtank', 'notifications', 'virustotal'];
 
-/** Singleton DB connection promise — opened once, reused forever. */
+/** Singleton DB connection promise: opened once, reused forever. */
 let _dbPromise = null;
 
 function openDB() {
@@ -40,7 +40,7 @@ function openDB() {
       reject(e.target.error);
     };
     req.onblocked = () => {
-      console.warn('[PhishGuard IDB] upgrade blocked — another tab has the DB open');
+      console.warn('[PhishGuard IDB] upgrade blocked: another tab has the DB open');
     };
   });
   return _dbPromise;
@@ -93,7 +93,7 @@ export async function idbDelete(storeName, key) {
 
 /**
  * Prune all entries in a store whose `cachedAt` field is older than ttlMs.
- * Runs in a single read-write cursor transaction — O(n) but called infrequently.
+ * Runs in a single read-write cursor transaction: O(n) but called infrequently.
  * @param {string}  storeName  One of the store names above.
  * @param {number}  ttlMs      Maximum age in milliseconds.
  * @returns {Promise<number>}  Count of deleted entries.

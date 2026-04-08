@@ -29,7 +29,7 @@ const URL_SHORTENERS = new Set([
 ]);
 
 // ─── Brand keywords (impersonation / subdomain spoofing) ─────────────────────
-// Full list — used for path checks and domain impersonation
+// Full list: used for path checks and domain impersonation
 const BRAND_KEYWORDS = [
   'paypal', 'amazon', 'google', 'microsoft', 'apple', 'facebook', 'instagram',
   'netflix', 'dropbox', 'linkedin', 'twitter', 'bank', 'secure', 'login',
@@ -39,7 +39,7 @@ const BRAND_KEYWORDS = [
   'discord', 'roblox', 'office365', 'docusign', 'wetransfer',
 ];
 
-// Actual company/service names only — used for subdomain and impersonation checks.
+// Actual company/service names only: used for subdomain and impersonation checks.
 // Generic action words (login, verify, account…) are excluded here to prevent
 // false positives on legitimate subdomains like account.hackthebox.com.
 const BRAND_NAMES = new Set([
@@ -85,7 +85,7 @@ const DANGEROUS_EXTENSIONS = new Set([
   '.hta', '.wsf', '.wsh', '.msi', '.msp', '.jar', '.reg',
 ]);
 
-// Credential / action keywords in URL path — only suspicious on untrusted domains
+// Credential / action keywords in URL path: only suspicious on untrusted domains
 const SUSPICIOUS_PATH_KEYWORDS = [
   'login', 'signin', 'sign-in', 'logon',
   'verify', 'verification', 'validate',
@@ -133,7 +133,7 @@ const SCORING = {
   HTTP_ONLY:             { score: 10, label: 'Unencrypted HTTP connection (no TLS)' },
   HOMOGRAPH:             { score: 40, label: 'Non-ASCII characters in hostname (possible homograph)' },
   // ── New checks ──
-  IDN_PUNYCODE:          { score: 45, label: 'Internationalized domain name (IDN) — possible homograph attack' },
+  IDN_PUNYCODE:          { score: 45, label: 'Internationalized domain name (IDN): possible homograph attack' },
   DANGEROUS_EXTENSION:   { score: 60, label: 'URL path contains a dangerous executable/script extension' },
   SUSPICIOUS_PATH:       { score: 20, label: 'URL path contains credential-harvesting keywords' },
   FREE_HOSTING:          { score: 35, label: 'Domain hosted on a known free/abused hosting platform' },
@@ -141,11 +141,11 @@ const SCORING = {
   HYPHEN_ABUSE:          { score: 15, label: 'Excessive hyphens in domain (algorithmically generated pattern)' },
   BRAND_IN_PATH:         { score: 20, label: 'Brand name in URL path on untrusted domain' },
   // ── New checks ──
-  DATA_URI:              { score: 90, label: 'Non-HTTP protocol (data:/javascript:/blob:) — definite phishing indicator' },
+  DATA_URI:              { score: 90, label: 'Non-HTTP protocol (data:/javascript:/blob:): definite phishing indicator' },
   CREDENTIAL_IN_URL:     { score: 65, label: 'Domain or brand used as username in URL (credential spoofing)' },
   LOOKALIKE_DIGITS:      { score: 50, label: 'ASCII digit/character substitution detected (homoglyph attack)' },
-  HIGH_ENTROPY:          { score: 25, label: 'High-entropy domain — possible algorithmically generated domain (DGA)' },
-  RLO_ATTACK:            { score: 75, label: 'Bidirectional control character in URL — visual direction-reversal spoofing attack (RLO/LRO)' },
+  HIGH_ENTROPY:          { score: 25, label: 'High-entropy domain: possible algorithmically generated domain (DGA)' },
+  RLO_ATTACK:            { score: 75, label: 'Bidirectional control character in URL: visual direction-reversal spoofing attack (RLO/LRO)' },
   UNICODE_NORMALIZATION: { score: 50, label: 'URL contains Unicode compatibility characters (fullwidth/mathematical) that disguise the real domain' },
 };
 
@@ -168,7 +168,7 @@ function checkURLShortener(hostname) {
 }
 
 /**
- * Levenshtein distance — used for typosquatting detection.
+ * Levenshtein distance: used for typosquatting detection.
  */
 function levenshtein(a, b) {
   const m = Array.from({ length: b.length + 1 }, (_, i) => [i]);
@@ -223,7 +223,7 @@ function checkBrandInSubdomain(hostname) {
 }
 
 /**
- * Entire trusted domain (e.g. "google.com") used as a subdomain label —
+ * Entire trusted domain (e.g. "google.com") used as a subdomain label,
  * the classic "accounts.google.com.evil.com" phishing pattern.
  */
 function checkTrustedBrandInSubdomain(hostname, regDomainKey) {
@@ -259,7 +259,7 @@ function checkIDNHomograph(hostname) {
 }
 
 /**
- * RFC 3492 Punycode decoder — converts a single xn-- label to its Unicode form.
+ * RFC 3492 Punycode decoder: converts a single xn-- label to its Unicode form.
  * Returns the original label unchanged if decoding fails or no xn-- prefix is present.
  * Implemented inline so urlAnalyzer.js stays a self-contained ES module with no deps.
  */
@@ -398,7 +398,7 @@ function checkHyphenAbuse(hostname) {
 // ─── NEW CHECK 7 ─────────────────────────────────────────────────────────────
 /**
  * Brand keyword present in URL path on an untrusted domain.
- * e.g. evil.com/paypal/login — attacker mirrors a brand's login page
+ * e.g. evil.com/paypal/login: attacker mirrors a brand's login page
  */
 function checkBrandInPath(pathname) {
   const lower = decodeURIComponent(pathname).toLowerCase();
@@ -521,15 +521,15 @@ export function analyzeURL(rawUrl) {
 
   // ── Normalised variants for comparison-based checks ───────────────────────
   // `hostname` (original, from URL parser) is preserved for:
-  //   • HOMOGRAPH check  — must see non-ASCII chars before they're collapsed
-  //   • IDN Punycode     — xn-- labels are already ASCII, unaffected
-  //   • Result display   — show the real domain to the user
+  //   • HOMOGRAPH check  : must see non-ASCII chars before they're collapsed
+  //   • IDN Punycode     : xn-- labels are already ASCII, unaffected
+  //   • Result display   : show the real domain to the user
   //
   // `normHostname` (NFKC + lowercase) is used for every check that compares
   //   against brand names, TLD lists, or trusted-domain sets so that fullwidth /
   //   mathematical Unicode variants are reduced to their ASCII equivalents first.
   //
-  // `normPathname` — same principle applied to the URL path.
+  // `normPathname`: same principle applied to the URL path.
   const normHostname = hostname.normalize('NFKC').toLowerCase();
   const normPathname = pathname.normalize('NFKC');
 
@@ -567,7 +567,7 @@ export function analyzeURL(rawUrl) {
 
   // Do NOT exit early if RLO or NFKC normalization variants were found.
   // Both attacks can make the parsed hostname look like a trusted domain while
-  // the raw URL contains the spoofing characters — whitelisting them would be
+  // the raw URL contains the spoofing characters: whitelisting them would be
   // a silent security hole.
   const isSpoofed = hasRLO || hasNormVariants;
 
@@ -643,7 +643,7 @@ export function analyzeURL(rawUrl) {
     add(SCORING.HTTP_ONLY);
 
   // ── 12. IDN / Punycode homograph ─────────────────────────────────────────
-  // xn-- labels are ASCII — normHostname and hostname behave the same here.
+  // xn-- labels are ASCII: normHostname and hostname behave the same here.
   // Decode to Unicode and compare against known brands for a specific label.
   if (checkIDNHomograph(normHostname)) {
     const unicodeForm = decodeIDNHostname(normHostname);
@@ -674,7 +674,7 @@ export function analyzeURL(rawUrl) {
     add(SCORING.FREE_HOSTING);
 
   // ── 16. Non-standard port ─────────────────────────────────────────────────
-  // Port is always ASCII digits — no normalization difference
+  // Port is always ASCII digits: no normalization difference
   if (checkNonStandardPort(parsed))
     add(SCORING.NONSTANDARD_PORT);
 
@@ -697,7 +697,7 @@ export function analyzeURL(rawUrl) {
 
   // ── 20. ASCII digit/lookalike substitution ────────────────────────────────
   // normHostname: fullwidth digits collapse to ASCII first, then the digit-
-  // substitution map (0→o, 1→l…) is applied — catches both attack variants.
+  // substitution map (0→o, 1→l…) is applied: catches both attack variants.
   const lookalikeMatch = checkLookalikeDigits(normHostname);
   if (lookalikeMatch)
     add({ ...SCORING.LOOKALIKE_DIGITS,

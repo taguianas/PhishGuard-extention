@@ -19,6 +19,7 @@ const FEED_TTL_MS      = 6  * 60 * 60 * 1000;  // 6 h  - OpenPhish refresh
 const RDAP_CACHE_TTL   = 24 * 60 * 60 * 1000;  // 24 h - RDAP per-domain cache
 const SB_CACHE_TTL     = 30 * 60 * 1000;        // 30 m - Safe Browsing cache
 const PT_CACHE_TTL     = 60 * 60 * 1000;        // 1 h  - PhishTank cache
+const VT_CACHE_TTL     = 24 * 60 * 60 * 1000;  // 24 h - VirusTotal cache (free tier: 500 req/day)
 const NOTIFY_COOLDOWN  = 60 * 60 * 1000;        // 1 h  - dedup per domain
 const CACHE_PRUNE_MS   = 12 * 60 * 60 * 1000;  // 12 h - IDB pruning interval
 const FAIL_RETRY_TTL   =  5 * 60 * 1000;        // 5 m  - retry window after a failed API call
@@ -91,7 +92,7 @@ async function notifyHighRisk(result) {
     type:               'basic',
     iconUrl:            chrome.runtime.getURL('icons/icon48.png'),
     title:              'PhishGuard: Phishing Link Detected',
-    message:            `${result.domain}   —   Score: ${result.score}/100`,
+    message:            `${result.domain}   :   Score: ${result.score}/100`,
     contextMessage:     topIndicators || 'Open PhishGuard for details.',
     priority:           2,
     requireInteraction: false,
@@ -160,7 +161,7 @@ async function checkGoogleSafeBrowsing(urls, apiKey) {
     const data        = await res.json();
     const matchedUrls = new Set((data.matches || []).map(m => m.threat.url));
 
-    // Cache all results (including clean ones) — parallel writes
+    // Cache all results (including clean ones) - parallel writes
     await Promise.all(uncached.map(url => {
       const isFlagged = matchedUrls.has(url);
       if (isFlagged) flagged.add(url);
@@ -245,13 +246,13 @@ function applyDomainAgeScore(analysis, ageInfo) {
 
   if (ageInDays < 7) {
     pts   = 50;
-    label = `Domain registered only ${Math.floor(ageInDays)} day(s) ago — ${dateStr}`;
+    label = `Domain registered only ${Math.floor(ageInDays)} day(s) ago : ${dateStr}`;
   } else if (ageInDays < 30) {
     pts   = 35;
-    label = `Domain registered ${Math.floor(ageInDays)} days ago — ${dateStr}`;
+    label = `Domain registered ${Math.floor(ageInDays)} days ago : ${dateStr}`;
   } else if (ageInDays < 90) {
     pts   = 15;
-    label = `Domain registered ${Math.floor(ageInDays)} days ago — ${dateStr}`;
+    label = `Domain registered ${Math.floor(ageInDays)} days ago : ${dateStr}`;
   }
 
   if (pts > 0) {
@@ -274,6 +275,8 @@ async function loadSettings() {
     safeBrowsingApiKey:   '',
     phishTankEnabled:     true,
     phishTankApiKey:      '',
+    virusTotalEnabled:    true,
+    virusTotalApiKey:     '',
     ...data.phishguard_settings,
   };
 }
@@ -359,6 +362,78 @@ async function checkPhishTank(url, apiKey) {
   }
 }
 
+// ─── VirusTotal ───────────────────────────────────────────────────────────────
+// Free tier: 4 req/min, 500 req/day.
+// Uses the v3 URL lookup endpoint. A 404 means the URL is not yet in VT's
+// database (genuinely unknown), which is treated as unchecked, not safe.
+
+/**
+ * Encode a URL to the base64url format VirusTotal v3 uses as a resource ID.
+ * Returns null if the URL cannot be encoded (should not happen for valid hrefs).
+ */
+function vtUrlId(url) {
+  try {
+    return btoa(url).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  } catch {
+    return null;
+  }
+}
+
+async function checkVirusTotal(url, apiKey) {
+  if (!apiKey) return null;
+
+  const now    = Date.now();
+  const cached = await idbGet('virustotal', url);
+  if (cached?.failed) {
+    if (now - cached.cachedAt < FAIL_RETRY_TTL) return null;
+    // else fall through and retry
+  } else if (cached && now - cached.cachedAt < VT_CACHE_TTL) {
+    return cached.result;
+  }
+
+  const urlId = vtUrlId(url);
+  if (!urlId) return null;
+
+  try {
+    const res = await fetch(`https://www.virustotal.com/api/v3/urls/${urlId}`, {
+      headers: { 'x-apikey': apiKey },
+      signal:  AbortSignal.timeout(8_000),
+    });
+
+    if (res.status === 404) {
+      // URL not in VT database - cannot determine safety; don't cache so we retry later
+      return null;
+    }
+
+    if (res.status === 429) {
+      // Rate limited - cache as failed with short retry window
+      await idbSet('virustotal', url, { failed: true, cachedAt: now });
+      console.warn('[PhishGuard] VirusTotal rate limit hit (429)');
+      return null;
+    }
+
+    if (!res.ok) throw new Error(`VirusTotal ${res.status}`);
+
+    const data  = await res.json();
+    const stats = data?.data?.attributes?.last_analysis_stats || {};
+    const result = {
+      malicious:  stats.malicious  || 0,
+      suspicious: stats.suspicious || 0,
+      harmless:   stats.harmless   || 0,
+      total: (stats.malicious || 0) + (stats.suspicious || 0)
+           + (stats.harmless  || 0) + (stats.undetected || 0),
+    };
+
+    await idbSet('virustotal', url, { result, cachedAt: now });
+    console.log(`[PhishGuard] VirusTotal: ${result.malicious} malicious, ${result.suspicious} suspicious / ${result.total} engines`);
+    return result;
+  } catch (err) {
+    console.warn('[PhishGuard] VirusTotal query failed:', err.message);
+    await idbSet('virustotal', url, { failed: true, cachedAt: now });
+    return null;
+  }
+}
+
 // ─── URLHaus ──────────────────────────────────────────────────────────────────
 
 async function queryURLHaus(url) {
@@ -409,7 +484,7 @@ async function handleAnalyzeURLs(urls) {
   const settings = await loadSettings();
   const results  = [];
 
-  // Batch Safe Browsing request (one call for all URLs — efficient)
+  // Batch Safe Browsing request (one call for all URLs - efficient)
   const sbFlagged = (settings.safeBrowsingEnabled && settings.safeBrowsingApiKey)
     ? await checkGoogleSafeBrowsing(urls, settings.safeBrowsingApiKey)
     : new Set();
@@ -442,7 +517,7 @@ async function handleAnalyzeURLs(urls) {
       if (ageInfo) analysis.domainAge = ageInfo;
     }
 
-    // Layer 4: PhishTank — dedicated phishing database (on-demand per suspicious URL)
+    // Layer 4: PhishTank - dedicated phishing database (on-demand per suspicious URL)
     if (settings.phishTankEnabled && analysis.score > 0
         && !analysis.threatFeedHit && !analysis.safeBrowsingHit) {
       const ptHit = await checkPhishTank(rawUrl, settings.phishTankApiKey);
@@ -465,6 +540,43 @@ async function handleAnalyzeURLs(urls) {
       }
     }
 
+    // Layer 6: VirusTotal (optional, free tier: 4 req/min / 500 req/day)
+    // Only queried when URL is already suspicious from heuristics and no definitive
+    // hit found yet. Catches zero-day phishing kits not yet in feed databases.
+    if (settings.virusTotalEnabled && settings.virusTotalApiKey
+        && analysis.score > 0
+        && !analysis.threatFeedHit && !analysis.safeBrowsingHit
+        && !analysis.urlhausHit   && !analysis.phishTankHit) {
+      const vtResult = await checkVirusTotal(rawUrl, settings.virusTotalApiKey);
+      if (vtResult) {
+        if (vtResult.malicious >= 3) {
+          analysis.indicators.push({
+            score: 60,
+            label: `VirusTotal: flagged by ${vtResult.malicious}/${vtResult.total} security engines`,
+          });
+          analysis.score     = Math.min(analysis.score + 60, 100);
+          analysis.riskLevel = 'high-risk';
+          analysis.vtHit     = true;
+        } else if (vtResult.malicious >= 1) {
+          analysis.indicators.push({
+            score: 35,
+            label: `VirusTotal: flagged by ${vtResult.malicious}/${vtResult.total} security engine(s) - verify manually`,
+          });
+          analysis.score     = Math.min(analysis.score + 35, 100);
+          analysis.riskLevel = analysis.score >= 60 ? 'high-risk' : 'suspicious';
+          analysis.vtHit     = true;
+        } else if (vtResult.suspicious >= 5) {
+          analysis.indicators.push({
+            score: 15,
+            label: `VirusTotal: flagged as suspicious by ${vtResult.suspicious}/${vtResult.total} engines`,
+          });
+          analysis.score     = Math.min(analysis.score + 15, 100);
+          analysis.riskLevel = analysis.score >= 60 ? 'high-risk'
+                             : analysis.score > 30  ? 'suspicious' : 'safe';
+        }
+      }
+    }
+
     results.push(analysis);
 
     // Fire notification (non-blocking)
@@ -479,7 +591,7 @@ async function handleAnalyzeURLs(urls) {
 
 /**
  * Run heuristic + feed + RDAP checks on a sender's email domain.
- * Skips Safe Browsing, PhishTank, and URLHaus — those APIs expect full URLs
+ * Skips Safe Browsing, PhishTank, and URLHaus: those APIs expect full URLs
  * and would waste quota on domain-only input that often returns nothing useful.
  *
  * @param {string} domain - registered domain extracted from the From: header
@@ -500,7 +612,7 @@ async function handleAnalyzeSender(domain) {
     analysis.riskLevel = 'high-risk';
   }
 
-  // Layer 2: RDAP domain age — a brand-new domain impersonating a bank is a
+  // Layer 2: RDAP domain age: a brand-new domain impersonating a bank is a
   // very strong signal; skip if already max-scored or feed-flagged.
   if (!analysis.threatFeedHit && analysis.score > 0) {
     const settings = await loadSettings();
@@ -589,7 +701,7 @@ async function pruneAllCaches() {
       idbPrune('phishtank',     PT_CACHE_TTL),
       idbPrune('notifications', NOTIFY_COOLDOWN),
     ]);
-    console.log(`[PhishGuard] Cache pruned — rdap:${rdapDel} sb:${sbDel} pt:${ptDel} notif:${notifDel} entries removed`);
+    console.log(`[PhishGuard] Cache pruned : rdap:${rdapDel} sb:${sbDel} pt:${ptDel} notif:${notifDel} entries removed`);
   } catch (err) {
     console.warn('[PhishGuard] Cache prune failed:', err.message);
   }

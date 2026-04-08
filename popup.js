@@ -16,7 +16,7 @@ async function loadStats() {
   try {
     stats = await chrome.runtime.sendMessage({ type: 'GET_STATS' });
   } catch {
-    setStatus('Background unavailable — reload email tab', false);
+    setStatus('Background unavailable - reload email tab', false);
     return;
   }
   if (!stats) stats = empty();
@@ -54,7 +54,7 @@ function renderBar(s) {
     status.className    = 'pg-threat-status warn';
   } else {
     fill.className      = 'pg-bar-fill';
-    status.textContent  = total > 0 ? 'Clear' : '—';
+    status.textContent  = total > 0 ? 'Clear' : '-';
     status.className    = 'pg-threat-status' + (total > 0 ? ' ok' : '');
   }
 }

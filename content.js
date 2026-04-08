@@ -17,12 +17,12 @@
   const SENDER_BANNER_ATTR = 'data-phishguard-sender';
   const QR_BANNER_ATTR     = 'data-phishguard-qr';
 
-  /** Minimum image dimension (px) to attempt QR scanning — skips tracking pixels. */
+  /** Minimum image dimension (px) to attempt QR scanning: skips tracking pixels. */
   const QR_MIN_SIZE = 50;
 
   /**
    * Score penalty for each failed email authentication check.
-   * DMARC is weighted highest — a DMARC fail means the sending domain
+   * DMARC is weighted highest: a DMARC fail means the sending domain
    * explicitly disavows the message, which is a strong spoofing signal.
    */
   const AUTH_FAIL_SCORES = { dmarc: 40, spf: 30, dkim: 25 };
@@ -52,7 +52,7 @@
   const AUTH_RESULT_RE = /\b(dmarc|spf|dkim)=(\w+)/gi;
 
   /**
-   * Email body selectors per platform — ordered from most to least specific.
+   * Email body selectors per platform: ordered from most to least specific.
    * Covers Gmail, Outlook Web, Yahoo Mail, ProtonMail.
    */
   const EMAIL_BODY_SELECTORS = [
@@ -79,7 +79,7 @@
 
   /**
    * Known redirect/proxy URL patterns used by email platforms.
-   * Gmail, Outlook, Yahoo, LinkedIn all wrap external links — we must unwrap
+   * Gmail, Outlook, Yahoo, LinkedIn all wrap external links: we must unwrap
    * to get the real destination before analysis.
    */
   const REDIRECT_PARAMS = {
@@ -110,17 +110,17 @@
   };
 
   // -------------------------------------------------------------------
-  // Bidi / RLO detection (runs in content script — no background needed)
+  // Bidi / RLO detection (runs in content script, no background needed)
   // -------------------------------------------------------------------
   /**
-   * Unicode bidirectional control characters — identical set to urlAnalyzer.js.
+   * Unicode bidirectional control characters: identical set to urlAnalyzer.js.
    * Checked here against anchor *display text* which the URL analyzer never sees.
    */
   const BIDI_CONTROL_RE = /[\u202A-\u202E\u2066-\u2069\u200E\u200F]/;
 
   /**
    * Inject an inline warning banner on an anchor whose visible text contains
-   * bidi control characters.  The href may be completely clean — the attack
+   * bidi control characters.  The href may be completely clean: the attack
    * spoofs the *displayed* URL, not the destination.
    *
    * Example: <a href="https://evil.com">https://google.co\u202Em</a>
@@ -146,7 +146,7 @@
           <span class="phishguard-domain-label">Display text spoofed</span>
         </div>
         <span class="phishguard-indicators-label">Indicators</span>
-        <ul><li>Bidirectional control character (RLO/LRO) in visible link text — the displayed URL is not what it appears to be</li></ul>
+        <ul><li>Bidirectional control character (RLO/LRO) in visible link text : the displayed URL is not what it appears to be</li></ul>
         <div class="phishguard-advice critical">
           Do not trust the displayed address. Check the real destination before clicking.
         </div>
@@ -158,7 +158,7 @@
     wrapper.appendChild(tooltip);
 
     anchor.setAttribute('aria-label',
-      'PhishGuard: High risk — link display text contains direction-reversal spoofing characters');
+      'PhishGuard: High risk : link display text contains direction-reversal spoofing characters');
     anchor.parentNode.insertBefore(wrapper, anchor);
     wrapper.appendChild(anchor);
   }
@@ -267,7 +267,7 @@
     wrapper.appendChild(tooltip);
 
     anchor.setAttribute('aria-label',
-      `PhishGuard: ${isCritical ? 'High risk' : 'Suspicious'} link — ${result.domain} (${result.score}/100)`);
+      `PhishGuard: ${isCritical ? 'High risk' : 'Suspicious'} link : ${result.domain} (${result.score}/100)`);
 
     anchor.parentNode.insertBefore(wrapper, anchor);
     wrapper.appendChild(anchor);
@@ -283,7 +283,7 @@
   }
 
   // -------------------------------------------------------------------
-  // Form scanner — detects phishing forms embedded in HTML emails
+  // Form scanner: detects phishing forms embedded in HTML emails
   // Attackers embed <form action="https://evil.com/steal"> in emails
   // to harvest credentials without a redirect.
   // -------------------------------------------------------------------
@@ -556,7 +556,7 @@
         `<span style="color:${accentColor};font-weight:600;font-size:10px;` +
           `text-transform:uppercase;letter-spacing:.07em;white-space:nowrap">PhishGuard</span>` +
         `<span style="color:#2a2e38;user-select:none"> │ </span>` +
-        `<span>Email authentication failed — risk score` +
+        `<span>Email authentication failed : risk score` +
           `<strong style="color:${accentColor};margin-left:4px">+${totalScore}</strong></span>` +
       `</div>` +
       `<div style="margin-bottom:5px">${pills}</div>` +
@@ -576,7 +576,7 @@
    * email body container. Never reads inside the body itself.
    *
    * Three fallback approaches:
-   *   1. Gmail's .gD[email] attribute — most reliable for Gmail.
+   *   1. Gmail's .gD[email] attribute: most reliable for Gmail.
    *   2. Email-address pattern in known header-area selectors.
    *   3. "From:" pattern in sibling branches of the container's ancestors.
    *
@@ -671,7 +671,7 @@
                 `${escapeHTML(i.label)}</li>`)
       .join('');
 
-    const verdict = isCritical ? 'Sender Domain — High Risk' : 'Sender Domain — Suspicious';
+    const verdict = isCritical ? 'Sender Domain : High Risk' : 'Sender Domain : Suspicious';
     const advice  = isCritical
       ? 'This sender domain appears to impersonate a known brand. Do not trust links or attachments.'
       : 'The sender domain has suspicious characteristics. Verify the sender before acting.';
@@ -720,7 +720,7 @@
     const isHigh = flagged.some(r => r.riskLevel === 'high-risk');
     const color  = isHigh ? '#c0392b' : '#b87333';
     const border = isHigh ? '#4a2020' : '#4a3820';
-    const verdict = isHigh ? 'QR Code — High Risk' : 'QR Code — Suspicious';
+    const verdict = isHigh ? 'QR Code - High Risk' : 'QR Code - Suspicious';
 
     const domainLines = flagged.slice(0, 4).map(r =>
       `<li style="font-size:11px;color:#c8ccd4;padding:2px 0 2px 10px;` +
@@ -803,7 +803,7 @@
           if (urlRE.test(raw)) qrURLs.push(raw);
         }
       } catch {
-        // SecurityError for tainted cross-origin images, or decode failure — skip
+        // SecurityError for tainted cross-origin images, or decode failure: skip
       }
     }
 
@@ -865,11 +865,11 @@
     if (level === 'high-risk') {
       status = `${stats.highRisk} high-risk link${stats.highRisk > 1 ? 's' : ''} detected` +
                (stats.suspicious > 0 ? ` · ${stats.suspicious} suspicious` : '') +
-               ' — do not click flagged links';
+               ' : do not click flagged links';
     } else if (level === 'suspicious') {
-      status = `${stats.suspicious} suspicious link${stats.suspicious > 1 ? 's' : ''} detected — verify before clicking`;
+      status = `${stats.suspicious} suspicious link${stats.suspicious > 1 ? 's' : ''} detected - verify before clicking`;
     } else {
-      status = `${stats.total} link${stats.total > 1 ? 's' : ''} scanned — no threats detected`;
+      status = `${stats.total} link${stats.total > 1 ? 's' : ''} scanned : no threats detected`;
     }
 
     const banner = document.createElement('div');
@@ -921,7 +921,7 @@
       // so all banners are prepended in the correct top-to-bottom order.
       const senderPromise = analyzeSenderDomain(container);
 
-      // QR code scan runs in parallel — BarcodeDetector is async but fast.
+      // QR code scan runs in parallel: BarcodeDetector is async but fast.
       // Awaited before scan banner so banner prepend order is preserved.
       const qrPromise = scanQRCodesInContainer(container);
 
@@ -997,7 +997,7 @@
   const debouncedScan = debounce(scanEmailContainers, SCAN_DEBOUNCE_MS);
 
   // -------------------------------------------------------------------
-  // MutationObserver — react to Gmail dynamically loading email content
+  // MutationObserver: react to Gmail dynamically loading email content
   // -------------------------------------------------------------------
   const observer = new MutationObserver((mutations) => {
     for (const m of mutations) {
@@ -1010,5 +1010,5 @@
   // Initial scan
   scanEmailContainers();
 
-  console.log('[PhishGuard] Active — monitoring Gmail for phishing links');
+  console.log('[PhishGuard] Active : monitoring Gmail for phishing links');
 })();
