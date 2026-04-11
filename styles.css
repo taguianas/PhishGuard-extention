@@ -157,6 +157,72 @@ a.phishguard-suspicious {
 }
 .phishguard-advice.critical { color: #a93226 !important; }
 
+/* ── User feedback buttons ───────────────────────────────── */
+.phishguard-feedback {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  margin-top: 8px !important;
+  padding-top: 7px !important;
+  border-top: 1px solid #2a2c30 !important;
+}
+
+.phishguard-feedback-label {
+  font-size: 10px !important;
+  color: #5a6272 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.04em !important;
+  margin-right: auto !important;
+}
+
+.phishguard-fb-btn {
+  font-size: 10px !important;
+  font-family: 'Segoe UI', system-ui, sans-serif !important;
+  font-weight: 600 !important;
+  padding: 3px 8px !important;
+  border-radius: 3px !important;
+  cursor: pointer !important;
+  border: 1px solid transparent !important;
+  line-height: 1.3 !important;
+  transition: background 0.15s, border-color 0.15s !important;
+}
+
+.phishguard-fb-phishing {
+  background: transparent !important;
+  color: #c0392b !important;
+  border-color: #4a2020 !important;
+}
+
+.phishguard-fb-phishing:hover {
+  background: rgba(192, 57, 43, 0.12) !important;
+  border-color: #6b2020 !important;
+}
+
+.phishguard-fb-safe {
+  background: transparent !important;
+  color: #2e7d52 !important;
+  border-color: #1e4a34 !important;
+}
+
+.phishguard-fb-safe:hover {
+  background: rgba(46, 125, 82, 0.12) !important;
+  border-color: #2e7d52 !important;
+}
+
+.phishguard-fb-done {
+  font-size: 10px !important;
+  font-style: italic !important;
+  letter-spacing: 0.02em !important;
+}
+
+.phishguard-fb-done-safe {
+  color: #2e7d52 !important;
+}
+
+.phishguard-fb-done-phishing {
+  color: #c0392b !important;
+}
+
 /* ── Credential submission blocking dialog ────────────────── */
 #phishguard-dialog-overlay {
   position: fixed !important;

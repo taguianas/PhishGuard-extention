@@ -4,17 +4,17 @@
 
 **`content.js`**
 
-- `QR_BANNER_ATTR = 'data-phishguard-qr'` — guard attribute preventing repeated scans per container.
-- `QR_MIN_SIZE = 50` — minimum image dimension (px) required before attempting QR detection. Filters out tracking pixels, spacer images, and icons that cannot contain scannable QR codes.
-- `injectQRBanner(container, flagged, totalFound)` — injects a styled warning banner when one or more QR-embedded URLs are flagged. Shows domain, score pill, and advice ("Do not scan it with your phone").
-- `scanQRCodesInContainer(container)` — async function that:
+- `QR_BANNER_ATTR = 'data-phishguard-qr'` - guard attribute preventing repeated scans per container.
+- `QR_MIN_SIZE = 50` - minimum image dimension (px) required before attempting QR detection. Filters out tracking pixels, spacer images, and icons that cannot contain scannable QR codes.
+- `injectQRBanner(container, flagged, totalFound)` - injects a styled warning banner when one or more QR-embedded URLs are flagged. Shows domain, score pill, and advice ("Do not scan it with your phone").
+- `scanQRCodesInContainer(container)` - async function that:
   1. Guards against double-execution with `QR_BANNER_ATTR`.
   2. Feature-detects `BarcodeDetector` (Chrome 83+ only; silently no-ops elsewhere).
   3. Calls `BarcodeDetector.getSupportedFormats()` and aborts if `qr_code` is not listed.
   4. Filters `<img>` elements to those that are fully loaded (`complete`) and meet `QR_MIN_SIZE`.
   5. Runs `detector.detect(img)` for each qualifying image; catches `SecurityError` (cross-origin) per image and continues.
   6. Collects all `rawValue` strings that match `^https?://`.
-  7. Sends them to `background.js` via the existing `ANALYZE_URLS` message — full 5-layer pipeline (heuristics + OpenPhish + Safe Browsing + PhishTank + URLHaus).
+  7. Sends them to `background.js` via the existing `ANALYZE_URLS` message - full 5-layer pipeline (heuristics + OpenPhish + Safe Browsing + PhishTank + URLHaus).
   8. If any result is `suspicious` or `high-risk`, calls `injectQRBanner`.
 
 ## What was improved
@@ -48,7 +48,7 @@ The user scans the QR code with their phone. The phone's camera app opens the UR
 
 ### Why `QR_MIN_SIZE = 50`
 
-A scannable QR code requires at minimum ~21 modules per side. At screen resolution, a QR code smaller than 50x50 px is either a tracking pixel, an icon, or a logo — none of which will contain a phishing URL. Skipping small images prevents unnecessary `detect()` calls on images that cannot match.
+A scannable QR code requires at minimum ~21 modules per side. At screen resolution, a QR code smaller than 50x50 px is either a tracking pixel, an icon, or a logo - none of which will contain a phishing URL. Skipping small images prevents unnecessary `detect()` calls on images that cannot match.
 
 ### Why silently skip cross-origin images
 

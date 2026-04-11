@@ -462,6 +462,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     handleAnalyzeSender(msg.domain).then(sendResponse);
     return true;
   }
+  if (msg.type === 'SUBMIT_FEEDBACK') {
+    handleFeedback(msg.url, msg.domain, msg.feedback, msg.indicators).then(sendResponse);
+    return true;
+  }
   if (msg.type === 'GET_STATS') {
     chrome.storage.local.get(['phishguard_stats'], d =>
       sendResponse(d.phishguard_stats || defaultStats()));
@@ -476,6 +480,107 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 });
+
+// ─── User Feedback / Allowlist ────────────────────────────────────────────────
+// Users can mark URLs as "safe" (false positive) or "confirm phishing".
+// "safe" feedback adds the domain to a per-user allowlist stored in
+// chrome.storage.local. The allowlist suppresses future warnings for that
+// domain by subtracting points from matching indicator categories.
+//
+// "phishing" feedback is stored in the log for future analytics.
+
+const FEEDBACK_KEY = 'phishguard_feedback';
+
+async function loadFeedback() {
+  const data = await chrome.storage.local.get([FEEDBACK_KEY]);
+  return data[FEEDBACK_KEY] || { allowlist: {}, confirmed: {} };
+}
+
+async function saveFeedback(fb) {
+  await chrome.storage.local.set({ [FEEDBACK_KEY]: fb });
+}
+
+/**
+ * Process a user feedback event.
+ * @param {string} url        - the flagged URL
+ * @param {string} domain     - its registered domain
+ * @param {'safe'|'phishing'} feedback
+ * @param {string[]} indicators - indicator labels active at the time of feedback
+ */
+async function handleFeedback(url, domain, feedback, indicators) {
+  const fb = await loadFeedback();
+
+  if (feedback === 'safe') {
+    if (!fb.allowlist[domain]) fb.allowlist[domain] = { count: 0, indicators: {} };
+    fb.allowlist[domain].count++;
+    fb.allowlist[domain].lastMarkedSafe = Date.now();
+    // Track which indicator types the user dismissed so we can weight them down
+    for (const label of (indicators || [])) {
+      fb.allowlist[domain].indicators[label] =
+        (fb.allowlist[domain].indicators[label] || 0) + 1;
+    }
+    // Remove from confirmed list if user changes their mind
+    delete fb.confirmed[url];
+  }
+
+  if (feedback === 'phishing') {
+    fb.confirmed[url] = {
+      domain,
+      confirmedAt: Date.now(),
+      indicators: indicators || [],
+    };
+    // Remove from allowlist if user changes their mind about this domain
+    delete fb.allowlist[domain];
+  }
+
+  await saveFeedback(fb);
+  return { ok: true };
+}
+
+/**
+ * Apply allowlist score adjustment to an analysis result.
+ * If the domain was previously marked safe by the user, reduce the score
+ * proportionally to the number of times it was marked and how many of the
+ * current indicators were previously dismissed.
+ *
+ * @param {object} analysis - mutable analyzeURL result
+ */
+async function applyAllowlistAdjustment(analysis) {
+  const fb = await loadFeedback();
+  const entry = fb.allowlist[analysis.domain];
+  if (!entry) return;
+
+  // Count how many of the current indicators were previously dismissed
+  let dismissedCount = 0;
+  for (const ind of analysis.indicators) {
+    if (entry.indicators[ind.label]) dismissedCount++;
+  }
+
+  // If user marked this domain safe and at least half the current indicators
+  // are the same ones they previously dismissed, apply a score reduction.
+  // Reduction is capped at 80% of the original score to keep truly dangerous
+  // URLs visible even with an allowlist entry.
+  if (dismissedCount === 0 && entry.count < 3) return;
+
+  const ratio     = analysis.indicators.length > 0
+    ? dismissedCount / analysis.indicators.length
+    : 0;
+  const reduction = Math.min(
+    Math.floor(analysis.score * Math.max(ratio, 0.3) * Math.min(entry.count, 5) / 5),
+    Math.floor(analysis.score * 0.8),
+  );
+
+  if (reduction > 0) {
+    analysis.score     = Math.max(analysis.score - reduction, 0);
+    analysis.riskLevel = analysis.score >= 60 ? 'high-risk'
+                       : analysis.score > 30  ? 'suspicious' : 'safe';
+    analysis.indicators.push({
+      score: -reduction,
+      label: `User allowlist: score reduced by ${reduction} (domain marked safe ${entry.count} time${entry.count > 1 ? 's' : ''})`,
+    });
+    analysis.allowlisted = true;
+  }
+}
 
 // ─── Analysis Pipeline ────────────────────────────────────────────────────────
 
@@ -576,6 +681,9 @@ async function handleAnalyzeURLs(urls) {
         }
       }
     }
+
+    // Apply user allowlist score adjustment (after all detection layers)
+    await applyAllowlistAdjustment(analysis);
 
     results.push(analysis);
 
@@ -695,13 +803,14 @@ chrome.alarms.onAlarm.addListener(alarm => {
 
 async function pruneAllCaches() {
   try {
-    const [rdapDel, sbDel, ptDel, notifDel] = await Promise.all([
+    const [rdapDel, sbDel, ptDel, vtDel, notifDel] = await Promise.all([
       idbPrune('rdap',          RDAP_CACHE_TTL),
       idbPrune('safebrowsing',  SB_CACHE_TTL),
       idbPrune('phishtank',     PT_CACHE_TTL),
+      idbPrune('virustotal',    VT_CACHE_TTL),
       idbPrune('notifications', NOTIFY_COOLDOWN),
     ]);
-    console.log(`[PhishGuard] Cache pruned : rdap:${rdapDel} sb:${sbDel} pt:${ptDel} notif:${notifDel} entries removed`);
+    console.log(`[PhishGuard] Cache pruned : rdap:${rdapDel} sb:${sbDel} pt:${ptDel} vt:${vtDel} notif:${notifDel} entries removed`);
   } catch (err) {
     console.warn('[PhishGuard] Cache prune failed:', err.message);
   }

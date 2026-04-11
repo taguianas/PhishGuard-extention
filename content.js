@@ -259,8 +259,19 @@
             ? 'Do not interact with this link. Report this email as phishing.'
             : 'Exercise caution before clicking this link.'}
         </div>
+        <div class="phishguard-feedback" data-phishguard-fb-url="${escapeAttr(result.url)}"
+             data-phishguard-fb-domain="${escapeAttr(result.domain)}">
+          <span class="phishguard-feedback-label">Is this correct?</span>
+          <button class="phishguard-fb-btn phishguard-fb-phishing" data-fb="phishing"
+                  title="Confirm this is phishing">&#9888; Phishing</button>
+          <button class="phishguard-fb-btn phishguard-fb-safe" data-fb="safe"
+                  title="Mark as safe (false positive)">&#10003; Safe</button>
+        </div>
       </div>
     `;
+
+    // Wire up feedback buttons (event delegation on the tooltip)
+    tooltip.addEventListener('click', handleFeedbackClick);
 
     const wrapper = document.createElement('span');
     wrapper.className = 'phishguard-wrapper';
@@ -280,6 +291,56 @@
   function escapeHTML(str) {
     const m = { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' };
     return String(str).replace(/[&<>"']/g, c => m[c]);
+  }
+
+  /** Escape a string for use inside an HTML attribute value (double-quoted). */
+  function escapeAttr(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+                      .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // -------------------------------------------------------------------
+  // User feedback: "Mark as Safe" / "Confirm Phishing"
+  // -------------------------------------------------------------------
+
+  /**
+   * Click handler for feedback buttons inside tooltips.
+   * Uses event delegation: a single listener on the tooltip catches clicks
+   * on either button via the data-fb attribute.
+   */
+  function handleFeedbackClick(e) {
+    const btn = e.target.closest('[data-fb]');
+    if (!btn) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const feedback  = btn.getAttribute('data-fb'); // 'safe' or 'phishing'
+    const container = btn.closest('.phishguard-feedback');
+    if (!container) return;
+
+    const url    = container.getAttribute('data-phishguard-fb-url');
+    const domain = container.getAttribute('data-phishguard-fb-domain');
+
+    // Collect indicator labels from the sibling <ul> in the tooltip
+    const tooltipBody = container.closest('.phishguard-tooltip-body');
+    const indicators  = tooltipBody
+      ? [...tooltipBody.querySelectorAll('ul li')].map(li => li.textContent.trim())
+      : [];
+
+    // Send to background for storage
+    chrome.runtime.sendMessage({
+      type: 'SUBMIT_FEEDBACK',
+      url,
+      domain,
+      feedback,
+      indicators,
+    }).catch(() => {}); // fire-and-forget
+
+    // Visual confirmation: replace buttons with a thank-you message
+    container.innerHTML = feedback === 'safe'
+      ? '<span class="phishguard-fb-done phishguard-fb-done-safe">Marked as safe - score will be adjusted</span>'
+      : '<span class="phishguard-fb-done phishguard-fb-done-phishing">Confirmed phishing - thank you</span>';
   }
 
   // -------------------------------------------------------------------

@@ -3,12 +3,12 @@
 ## What was added
 
 **`urlAnalyzer.js`**
-- `SCORING.UNICODE_NORMALIZATION` — new scoring entry, +50 pts, fires when the raw URL contains Unicode compatibility characters that collapse to different ASCII characters under NFKC normalization
-- `normRawUrl` — `rawUrl.normalize('NFKC')`, computed before parsing
-- `hasNormVariants` — boolean flag: `normRawUrl !== rawUrl`
-- `normHostname` — `hostname.normalize('NFKC').toLowerCase()`, derived after parsing; used for all comparison-based checks
-- `normPathname` — `pathname.normalize('NFKC')`; used for all path-based checks
-- `isSpoofed` flag — `hasRLO || hasNormVariants`; gates both trusted-domain early exits
+- `SCORING.UNICODE_NORMALIZATION` - new scoring entry, +50 pts, fires when the raw URL contains Unicode compatibility characters that collapse to different ASCII characters under NFKC normalization
+- `normRawUrl` - `rawUrl.normalize('NFKC')`, computed before parsing
+- `hasNormVariants` - boolean flag: `normRawUrl !== rawUrl`
+- `normHostname` - `hostname.normalize('NFKC').toLowerCase()`, derived after parsing; used for all comparison-based checks
+- `normPathname` - `pathname.normalize('NFKC')`; used for all path-based checks
+- `isSpoofed` flag - `hasRLO || hasNormVariants`; gates both trusted-domain early exits
 
 ## What was improved
 
@@ -33,7 +33,7 @@
 | Excessive subdomains | `hostname.split('.')` | `hostParts` (from `normHostname`) | Consistent source |
 | `regDomainKey` derivation | `hostname.toLowerCase()` | `normHostname` | Consistent source for trusted-domain lookup |
 
-**`checkSuspiciousCharacters` intentionally kept on original `hostname`** — if we passed `normHostname`, fullwidth chars would already be collapsed to ASCII and the HOMOGRAPH check would silently pass. The original must be preserved here so non-ASCII is still visible for detection.
+**`checkSuspiciousCharacters` intentionally kept on original `hostname`** - if we passed `normHostname`, fullwidth chars would already be collapsed to ASCII and the HOMOGRAPH check would silently pass. The original must be preserved here so non-ASCII is still visible for detection.
 
 **Trusted-domain early exits patched:**
 - `if (isMultiTLD && !hasRLO)` → `if (isMultiTLD && !isSpoofed)`
@@ -57,13 +57,13 @@ NFKC normalization catches a class of homograph attacks that every other check w
 ```
 
 **Why the check must happen before parsing:**
-Chrome's WHATWG URL parser applies IDNA processing to hostnames, which includes Unicode mapping steps that already normalize fullwidth chars. By the time `parsed.hostname` is read, `ｇｏｏｇｌｅ.com` has become `google.com` — the evidence is gone. Comparing `rawUrl` against `rawUrl.normalize('NFKC')` before parsing captures the manipulation before the parser erases it.
+Chrome's WHATWG URL parser applies IDNA processing to hostnames, which includes Unicode mapping steps that already normalize fullwidth chars. By the time `parsed.hostname` is read, `ｇｏｏｇｌｅ.com` has become `google.com` - the evidence is gone. Comparing `rawUrl` against `rawUrl.normalize('NFKC')` before parsing captures the manipulation before the parser erases it.
 
 **Why the trusted-domain exit must be blocked:**
 `ｇｏｏｇｌｅ.com` → parsed hostname = `google.com` → `TRUSTED_DOMAINS.has('google.com')` = `true` → old code returned `score: 0, safe`. With `hasNormVariants` gating the exit, the full analysis runs and `UNICODE_NORMALIZATION` (+50 pts) is added.
 
-**Two-track design — original vs normalized:**
-The HOMOGRAPH check (`checkSuspiciousCharacters`) must receive the *original* `hostname` because that check's entire purpose is to detect non-ASCII characters. If we normalized first, fullwidth chars would become ASCII and the check would return false — creating a gap where `UNICODE_NORMALIZATION` fires but `HOMOGRAPH` doesn't. Both checks complement each other and must operate on different inputs.
+**Two-track design - original vs normalized:**
+The HOMOGRAPH check (`checkSuspiciousCharacters`) must receive the *original* `hostname` because that check's entire purpose is to detect non-ASCII characters. If we normalized first, fullwidth chars would become ASCII and the check would return false - creating a gap where `UNICODE_NORMALIZATION` fires but `HOMOGRAPH` doesn't. Both checks complement each other and must operate on different inputs.
 
 ## Files changed
 

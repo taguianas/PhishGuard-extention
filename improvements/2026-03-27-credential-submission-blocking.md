@@ -28,7 +28,7 @@
 
 ## Why
 
-Detecting and labeling a suspicious form without blocking it is a half-measure. A user who notices the banner might still submit — intentionally or by clicking a pre-filled Submit button before the banner is fully visible. Attackers count on this: the form is embedded in a visually legitimate-looking email, and a small warning label is easy to overlook.
+Detecting and labeling a suspicious form without blocking it is a half-measure. A user who notices the banner might still submit - intentionally or by clicking a pre-filled Submit button before the banner is fully visible. Attackers count on this: the form is embedded in a visually legitimate-looking email, and a small warning label is easy to overlook.
 
 **The attack flow this closes:**
 
@@ -36,7 +36,7 @@ Detecting and labeling a suspicious form without blocking it is a half-measure. 
 2. User opens the email, sees a fake "Verify your account" form
 3. User fills in credentials and clicks Submit
 4. Without this feature: data is sent to `attacker.com` silently
-5. With this feature: submit is intercepted in capture phase, modal blocks the page, user must explicitly type "Submit Anyway" — a deliberate, friction-heavy action
+5. With this feature: submit is intercepted in capture phase, modal blocks the page, user must explicitly type "Submit Anyway" - a deliberate, friction-heavy action
 
 **Why capture phase:**
 Inline `onsubmit` handlers and form libraries attach listeners in the bubble phase. A capture-phase listener fires first, before any of those, ensuring the block cannot be bypassed by the host page's own event wiring.

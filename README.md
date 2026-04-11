@@ -333,6 +333,7 @@ Every improvement shipped to this repository is documented in [`improvements/`](
 | 2026-04-01 | [RLO + Punycode visual comparison in indicator labels](./improvements/2026-04-01-rlo-punycode-visual-comparison.md) |
 | 2026-04-06 | [QR code extraction via BarcodeDetector API](./improvements/2026-04-06-qr-code-extraction.md) |
 | 2026-04-08 | [VirusTotal URL lookup - zero-day phishing detection](./improvements/2026-04-08-virustotal-lookup.md) |
+| 2026-04-10 | [User feedback loop - "Mark as Safe" / "Confirm Phishing"](./improvements/2026-04-10-user-feedback-loop.md) |
 
 ---
 
@@ -362,8 +363,8 @@ The items below are planned for upcoming releases. Checked items are shipped.
 
 ### v2.2 - UX & Accuracy
 - [ ] Score contribution breakdown in tooltips (e.g. "Brand in subdomain: +65 pts")
-- [ ] "Mark as Safe" / "Confirm Phishing" feedback buttons on tooltips
-- [ ] Per-user domain allowlist via right-click context menu
+- [x] "Mark as Safe" / "Confirm Phishing" feedback buttons on tooltips
+- [x] Per-user domain allowlist (built from feedback, adjusts future scoring)
 - [ ] Credential submission blocker: intercept `submit` event on flagged phishing forms
 - [x] Failed API calls treated as "unchecked" rather than cached as "safe"
 

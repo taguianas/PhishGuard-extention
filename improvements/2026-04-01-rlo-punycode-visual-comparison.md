@@ -4,16 +4,16 @@
 
 **`urlAnalyzer.js`**
 
-- `decodePunycodeLabel(label)` — pure-JS RFC 3492 Punycode decoder. Converts a single `xn--` label to its Unicode form without any external dependency. Handles the full Punycode algorithm (basic code points, delta decoding, bias adaptation). Returns the label unchanged on malformed input so it never throws.
-- `decodeIDNHostname(hostname)` — splits a hostname on `.`, runs each label through `decodePunycodeLabel`, and rejoins. Converts `xn--pypl-ppa8b.com` to `pаypal.com` (with Cyrillic а).
+- `decodePunycodeLabel(label)` - pure-JS RFC 3492 Punycode decoder. Converts a single `xn--` label to its Unicode form without any external dependency. Handles the full Punycode algorithm (basic code points, delta decoding, bias adaptation). Returns the label unchanged on malformed input so it never throws.
+- `decodeIDNHostname(hostname)` - splits a hostname on `.`, runs each label through `decodePunycodeLabel`, and rejoins. Converts `xn--pypl-ppa8b.com` to `pаypal.com` (with Cyrillic а).
 
 ## What was improved
 
-**Check 0a — RLO / Bidi attack** (two paths, both updated):
+**Check 0a - RLO / Bidi attack** (two paths, both updated):
 
 Before:
 ```
-label: 'Bidirectional control character in URL — visual direction-reversal spoofing attack (RLO/LRO)'
+label: 'Bidirectional control character in URL - visual direction-reversal spoofing attack (RLO/LRO)'
 ```
 
 After (post-parse path, line ~535):
@@ -28,7 +28,7 @@ label: `Bidi/RLO attack: URL contains direction-reversal characters - visually a
 
 Both paths already computed `cleanDisplay` (raw URL with bidi chars stripped). Now that value is embedded in the indicator label so the UI can show the user exactly what visual form the attacker intended.
 
-**Check 12 — IDN Punycode homograph** (updated):
+**Check 12 - IDN Punycode homograph** (updated):
 
 Before:
 ```js
@@ -68,7 +68,7 @@ With this change, the indicator shows the bidi-stripped form so the user can com
 
 ### Why inline RFC 3492 (not a library)
 
-`urlAnalyzer.js` is an ES module imported by the background service worker. Adding an npm dependency would require a bundler, which this extension does not use. The Punycode algorithm is well-specified, short, and stable — the entire decoder fits in ~50 lines. Using the browser's own WHATWG URL API is not viable here because we need the Unicode label, not the ASCII-compatible encoding (ACE) form.
+`urlAnalyzer.js` is an ES module imported by the background service worker. Adding an npm dependency would require a bundler, which this extension does not use. The Punycode algorithm is well-specified, short, and stable - the entire decoder fits in ~50 lines. Using the browser's own WHATWG URL API is not viable here because we need the Unicode label, not the ASCII-compatible encoding (ACE) form.
 
 ### Why `checkDomainImpersonation` on the Unicode registered domain
 
