@@ -184,6 +184,26 @@ body {
 }
 .pg-btn-icon:hover { color: var(--text); }
 
+.pg-btn-remove {
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--danger);
+  border-color: var(--danger);
+  opacity: 0.6;
+}
+.pg-btn-remove:hover {
+  opacity: 1;
+  color: #fff;
+  background: var(--danger);
+}
+
+.pg-empty {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-style: italic;
+  padding: 6px 0;
+}
+
 .pg-field-hint {
   font-size: 11px;
   color: var(--muted);

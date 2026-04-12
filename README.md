@@ -334,6 +334,7 @@ Every improvement shipped to this repository is documented in [`improvements/`](
 | 2026-04-06 | [QR code extraction via BarcodeDetector API](./improvements/2026-04-06-qr-code-extraction.md) |
 | 2026-04-08 | [VirusTotal URL lookup - zero-day phishing detection](./improvements/2026-04-08-virustotal-lookup.md) |
 | 2026-04-10 | [User feedback loop - "Mark as Safe" / "Confirm Phishing"](./improvements/2026-04-10-user-feedback-loop.md) |
+| 2026-04-12 | [Per-user domain allowlist via context menu](./improvements/2026-04-12-context-menu-allowlist.md) |
 
 ---
 

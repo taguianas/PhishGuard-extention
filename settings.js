@@ -117,4 +117,74 @@ function showBanner() {
   setTimeout(() => { saveBanner.hidden = true; }, 3000);
 }
 
+// ── Allowlist Management ─────────────────────────────────────────────────────
+const allowlistTable = document.getElementById('allowlist-table');
+const allowlistBody  = document.getElementById('allowlist-body');
+const allowlistEmpty = document.getElementById('allowlist-empty');
+
+async function loadAllowlist() {
+  let list;
+  try {
+    list = await chrome.runtime.sendMessage({ type: 'GET_ALLOWLIST' });
+  } catch {
+    return; // background unavailable
+  }
+
+  const domains = Object.keys(list || {});
+  if (!domains.length) {
+    allowlistTable.hidden = true;
+    allowlistEmpty.hidden = false;
+    return;
+  }
+
+  allowlistEmpty.hidden = true;
+  allowlistTable.hidden = false;
+  allowlistBody.innerHTML = '';
+
+  // Sort by most recently marked safe
+  domains.sort((a, b) => (list[b].lastMarkedSafe || 0) - (list[a].lastMarkedSafe || 0));
+
+  for (const domain of domains) {
+    const entry = list[domain];
+    const tr = document.createElement('tr');
+
+    const tdDomain = document.createElement('td');
+    tdDomain.textContent = domain;
+    tdDomain.style.fontFamily = 'Consolas, monospace';
+    tdDomain.style.fontSize   = '11.5px';
+
+    const tdCount = document.createElement('td');
+    tdCount.className = 'num';
+    tdCount.textContent = entry.count || 1;
+
+    const tdDate = document.createElement('td');
+    tdDate.textContent = entry.lastMarkedSafe
+      ? new Date(entry.lastMarkedSafe).toLocaleDateString(undefined, {
+          year: 'numeric', month: 'short', day: 'numeric',
+        })
+      : '-';
+
+    const tdAction = document.createElement('td');
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'pg-btn-icon pg-btn-remove';
+    removeBtn.textContent = '\u2715'; // ✕
+    removeBtn.title = 'Remove from allowlist';
+    removeBtn.addEventListener('click', () => removeAllowlistEntry(domain));
+    tdAction.appendChild(removeBtn);
+
+    tr.append(tdDomain, tdCount, tdDate, tdAction);
+    allowlistBody.appendChild(tr);
+  }
+}
+
+async function removeAllowlistEntry(domain) {
+  try {
+    await chrome.runtime.sendMessage({ type: 'REMOVE_ALLOWLIST', domain });
+  } catch {
+    return;
+  }
+  loadAllowlist();
+}
+
 loadSettings();
+loadAllowlist();

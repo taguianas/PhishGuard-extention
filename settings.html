@@ -205,6 +205,36 @@
     </div>
   </div>
 
+  <!-- Domain Allowlist -->
+  <div class="pg-section">
+    <div class="pg-section-header">
+      <div>
+        <div class="pg-section-title">Domain Allowlist</div>
+        <div class="pg-section-desc">
+          Domains you marked as safe via tooltip buttons or right-click menu.
+          Allowlisted domains get a reduced risk score on future scans.
+          Remove a domain to restore full scoring.
+        </div>
+      </div>
+    </div>
+    <div class="pg-section-body">
+      <div id="allowlist-container">
+        <p class="pg-empty" id="allowlist-empty">No domains allowlisted yet.</p>
+        <table class="pg-table" id="allowlist-table" hidden>
+          <thead>
+            <tr>
+              <th>Domain</th>
+              <th>Times Marked Safe</th>
+              <th>Last Marked</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="allowlist-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- About -->
   <div class="pg-section">
     <div class="pg-section-header">

@@ -49,7 +49,8 @@
   "permissions": [
     "storage",
     "alarms",
-    "notifications"
+    "notifications",
+    "contextMenus"
   ],
 
   "host_permissions": [
@@ -63,7 +64,8 @@
     "https://urlhaus-api.abuse.ch/*",
     "https://safebrowsing.googleapis.com/*",
     "https://rdap.org/*",
-    "https://checkurl.phishtank.com/*"
+    "https://checkurl.phishtank.com/*",
+    "https://www.virustotal.com/*"
   ],
 
   "content_security_policy": {

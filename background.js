@@ -466,6 +466,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     handleFeedback(msg.url, msg.domain, msg.feedback, msg.indicators).then(sendResponse);
     return true;
   }
+  if (msg.type === 'GET_ALLOWLIST') {
+    loadFeedback().then(fb => sendResponse(fb.allowlist || {}));
+    return true;
+  }
+  if (msg.type === 'REMOVE_ALLOWLIST') {
+    loadFeedback().then(async fb => {
+      delete fb.allowlist[msg.domain];
+      await saveFeedback(fb);
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
   if (msg.type === 'GET_STATS') {
     chrome.storage.local.get(['phishguard_stats'], d =>
       sendResponse(d.phishguard_stats || defaultStats()));
@@ -785,6 +797,44 @@ async function updateStats(results) {
   await chrome.storage.local.set({ phishguard_stats: stats });
   updateBadge(); // always update badge after a scan
 }
+
+// ─── Context Menu: "Allow this domain" ────────────────────────────────────────
+// Adds a right-click menu item on links inside supported email clients.
+// Clicking it extracts the domain and adds it to the per-user allowlist,
+// giving the user a one-click way to suppress false positives.
+
+const CONTEXT_MENU_ID = 'phishguard-allow-domain';
+
+// Email client URL patterns where the context menu is relevant
+const EMAIL_PATTERNS = [
+  'https://mail.google.com/*',
+  'https://outlook.live.com/*',
+  'https://outlook.office.com/*',
+  'https://outlook.office365.com/*',
+  'https://mail.yahoo.com/*',
+  'https://mail.proton.me/*',
+];
+
+// Create menu item once at SW startup; chrome.contextMenus.create is idempotent
+// when called with the same id, so repeated SW restarts are safe.
+chrome.contextMenus.create({
+  id:                  CONTEXT_MENU_ID,
+  title:               'PhishGuard: Allow this domain',
+  contexts:            ['link'],
+  documentUrlPatterns: EMAIL_PATTERNS,
+}, () => chrome.runtime.lastError); // suppress "duplicate id" errors on SW restart
+
+chrome.contextMenus.onClicked.addListener(async (info) => {
+  if (info.menuItemId !== CONTEXT_MENU_ID) return;
+  if (!info.linkUrl) return;
+
+  let domain;
+  try { domain = new URL(info.linkUrl).hostname.toLowerCase(); } catch { return; }
+
+  // Reuse the existing feedback infrastructure to add to allowlist
+  await handleFeedback(info.linkUrl, domain, 'safe', []);
+  console.log(`[PhishGuard] Domain added to allowlist via context menu: ${domain}`);
+});
 
 // ─── Alarms & Startup ─────────────────────────────────────────────────────────
 
