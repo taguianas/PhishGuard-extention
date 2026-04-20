@@ -1,5 +1,5 @@
 """
-PhishGuard – Icon Generator
+PhishGuard - Icon Generator
 Run this script once to generate PNG icons for the extension.
 Requires: pip install Pillow
 """

@@ -335,6 +335,10 @@ Every improvement shipped to this repository is documented in [`improvements/`](
 | 2026-04-08 | [VirusTotal URL lookup - zero-day phishing detection](./improvements/2026-04-08-virustotal-lookup.md) |
 | 2026-04-10 | [User feedback loop - "Mark as Safe" / "Confirm Phishing"](./improvements/2026-04-10-user-feedback-loop.md) |
 | 2026-04-12 | [Per-user domain allowlist via context menu](./improvements/2026-04-12-context-menu-allowlist.md) |
+| 2026-04-12 | [Outlook compatibility fix - iframe support, DOM selectors, sender extraction](./improvements/2026-04-12-outlook-compatibility.md) |
+| 2026-04-15 | [Scoring explainability - per-indicator score pills in tooltip and popup](./improvements/2026-04-15-scoring-explainability.md) |
+| 2026-04-19 | [Developer risk level - reduce false positives on replit.dev, glitch.me, localhost, private IPs](./improvements/2026-04-19-developer-risk-level.md) |
+| 2026-04-20 | [Batch RDAP requests - dedupe unique domains and run lookups in parallel](./improvements/2026-04-20-batch-rdap-requests.md) |
 
 ---
 
@@ -363,7 +367,7 @@ The items below are planned for upcoming releases. Checked items are shipped.
 - [x] VirusTotal URL lookup integration (optional, free tier: 4 req/min)
 
 ### v2.2 - UX & Accuracy
-- [ ] Score contribution breakdown in tooltips (e.g. "Brand in subdomain: +65 pts")
+- [x] Score contribution breakdown in tooltips (e.g. "Brand in subdomain: +65 pts")
 - [x] "Mark as Safe" / "Confirm Phishing" feedback buttons on tooltips
 - [x] Per-user domain allowlist (built from feedback, adjusts future scoring)
 - [ ] Credential submission blocker: intercept `submit` event on flagged phishing forms
@@ -381,8 +385,8 @@ The items below are planned for upcoming releases. Checked items are shipped.
 - **Zero-day phishing kits:** unknown pages not yet indexed in any threat feed are caught by heuristics only; novel techniques may slip through
 - **No TLS certificate validation:** the extension cannot verify whether a site's SSL certificate matches its claimed identity
 - **Trusted domain bypass:** the 54 whitelisted domains skip all heuristic checks; a link from a compromised trusted domain would not be flagged by heuristics (it would still be checked against threat feeds)
-- **QR codes:** images containing QR codes with malicious URLs are not analyzed (planned for v2.1)
-- **No DMARC/SPF/DKIM:** sender authentication headers are not parsed; a spoofed sender domain is not factored into the score (planned for v2.1)
+- **QR code coverage:** QR code scanning uses the browser's BarcodeDetector API (Chrome 83+); images loaded lazily or rendered as CSS backgrounds may be missed
+- **Outlook DOM fragility:** Outlook frequently changes its internal class names and DOM structure; selectors may break after Outlook updates
 
 ---
 

@@ -1,5 +1,5 @@
 /**
- * PhishGuard – Settings Page
+ * PhishGuard - Settings Page
  */
 
 const DEFAULTS = {

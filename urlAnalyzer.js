@@ -147,6 +147,7 @@ const SCORING = {
   HIGH_ENTROPY:          { score: 25, label: 'High-entropy domain: possible algorithmically generated domain (DGA)' },
   RLO_ATTACK:            { score: 75, label: 'Bidirectional control character in URL: visual direction-reversal spoofing attack (RLO/LRO)' },
   UNICODE_NORMALIZATION: { score: 50, label: 'URL contains Unicode compatibility characters (fullwidth/mathematical) that disguise the real domain' },
+  DEVELOPER_HOST:        { score: 15, label: 'Developer / dev-environment host: low phishing risk for this class of URL, but still verify before entering credentials' },
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -165,6 +166,100 @@ function checkIPAddress(hostname) {
 
 function checkURLShortener(hostname) {
   return URL_SHORTENERS.has(hostname.replace(/^www\./, ''));
+}
+
+// ─── Developer / dev-environment detection ────────────────────────────────────
+// These hosts are overwhelmingly benign for technical users: a phishing feed
+// hit on replit.dev is still dangerous and is caught by the feed layer later,
+// but by default an unknown replit.dev / glitch.me / localhost URL should
+// produce an informational "Developer" label rather than a high-risk alarm.
+//
+// The eTLD-based entries (e.g. "replit.dev") match that suffix and any
+// subdomain (e.g. "my-app.replit.dev"). Exact hostnames (e.g. "localhost")
+// match only the literal string.
+const DEVELOPER_DOMAIN_SUFFIXES = new Set([
+  // Online IDEs / sandbox deployments
+  'replit.dev',
+  'repl.co',
+  'glitch.me',
+  'glitch.com',
+  'stackblitz.io',
+  'codesandbox.io',
+  'codepen.io',
+  'jsfiddle.net',
+  'plnkr.co',
+  // Dev tunnels
+  'ngrok.io',
+  'ngrok-free.app',
+  'ngrok.app',
+  'loca.lt',            // localtunnel.me subdomains use *.loca.lt
+  'trycloudflare.com',
+  'githubpreview.dev',
+  'gitpod.io',
+  'localhost.run',
+  // Preview deploys that are clearly dev-mode, not prod
+  'vercel.app',         // production apps usually have custom domains
+  'netlify.app',
+  'onrender.com',
+  'railway.app',
+  'fly.dev',
+  'herokuapp.com',
+  'pages.dev',          // Cloudflare Pages previews
+  'workers.dev',        // Cloudflare Workers
+  'lovable.app',
+  'bolt.new',
+]);
+
+const DEVELOPER_EXACT_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '::1',
+  '[::1]',
+]);
+
+/**
+ * Return true if the hostname is a private / loopback IP (IPv4 RFC 1918,
+ * IPv4 link-local, IPv6 loopback, IPv6 unique local). These hosts resolve to
+ * a machine on the user's own network and cannot be a phishing target in the
+ * conventional sense.
+ */
+function isPrivateIP(hostname) {
+  // IPv4
+  const v4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [+v4[1], +v4[2]];
+    if (a === 10) return true;                           // 10.0.0.0/8
+    if (a === 127) return true;                          // loopback 127.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true;    // 172.16.0.0/12
+    if (a === 192 && b === 168) return true;             // 192.168.0.0/16
+    if (a === 169 && b === 254) return true;             // link-local
+    if (a === 0) return true;                            // 0.0.0.0/8
+    return false;
+  }
+  // IPv6 loopback / unique-local / link-local
+  const bare = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (bare === '::1' || bare === '::') return true;
+  if (/^fc[0-9a-f]{2}:/.test(bare) || /^fd[0-9a-f]{2}:/.test(bare)) return true;  // fc00::/7
+  if (/^fe[89ab][0-9a-f]:/.test(bare)) return true;     // fe80::/10 link-local
+  return false;
+}
+
+/**
+ * Return true if the hostname belongs to a recognized development environment
+ * (online IDE, tunnel, preview deploy, loopback, or private network). Matches
+ * both exact hostnames (localhost) and eTLD-style suffixes (*.replit.dev).
+ */
+function isDeveloperHost(hostname) {
+  const bare = hostname.replace(/^www\./, '').toLowerCase();
+  if (DEVELOPER_EXACT_HOSTS.has(bare)) return true;
+  if (isPrivateIP(bare)) return true;
+  // Suffix match: for each labeled suffix, check whether the hostname ends
+  // with ".suffix" or equals "suffix".
+  for (const suffix of DEVELOPER_DOMAIN_SUFFIXES) {
+    if (bare === suffix || bare.endsWith('.' + suffix)) return true;
+  }
+  return false;
 }
 
 /**
@@ -488,9 +583,9 @@ export function analyzeURL(rawUrl) {
   // erases the evidence.
   //
   // What NFKC normalization maps to ASCII:
-  //   • Fullwidth ASCII   ｇｏｏｇｌｅ  (U+FF41–U+FF5A)  → google
-  //   • Math bold         𝗴𝗼𝗼𝗴𝗹𝗲      (U+1D400–U+1D7FF) → google
-  //   • Math italic       𝘨𝘰𝘰𝘨𝘭𝘦      (U+1D400–U+1D7FF) → google
+  //   • Fullwidth ASCII   ｇｏｏｇｌｅ  (U+FF41 to U+FF5A)  → google
+  //   • Math bold         𝗴𝗼𝗼𝗴𝗹𝗲      (U+1D400 to U+1D7FF) → google
+  //   • Math italic       𝘨𝘰𝘰𝘨𝘭𝘦      (U+1D400 to U+1D7FF) → google
   //   • Superscript nums  ⁰¹²³…        → 0123…
   //   • Compatibility ligatures  ﬀ ﬁ ﬂ → ff fi fl
   const normRawUrl      = rawUrl.normalize('NFKC');
@@ -581,6 +676,28 @@ export function analyzeURL(rawUrl) {
 
   if (TRUSTED_DOMAINS.has(regDomainKey) && !isSpoofed)
     return { url: href, domain: hostname, score: 0, riskLevel: 'safe', indicators };
+
+  // ── Developer / dev-environment early exit ───────────────────────────────
+  // Hosts like replit.dev, glitch.me, localhost, 127.0.0.1, and 192.168.x.x
+  // get a dedicated "developer" risk level instead of the high-risk label
+  // that an IP-literal URL (check #1) or an uncommon TLD (check #7) would
+  // otherwise trigger. This reduces false-positive noise for technical users
+  // previewing their own work, while still leaving the threat-intelligence
+  // layer in background.js free to flag these hosts if they appear in
+  // OpenPhish / Safe Browsing / URLHaus.
+  //
+  // RLO / NFKC spoofing (isSpoofed) takes precedence: an attacker who puts
+  // bidi characters in a replit.dev hostname should NOT get the friendly
+  // developer label.
+  if (!isSpoofed && isDeveloperHost(normHostname)) {
+    return {
+      url:        href,
+      domain:     hostname,
+      score:      SCORING.DEVELOPER_HOST.score,
+      riskLevel:  'developer',
+      indicators: [SCORING.DEVELOPER_HOST],
+    };
+  }
 
   // ── 1. IP address ─────────────────────────────────────────────────────────
   // normHostname: fullwidth digits (e.g. １９２．１６８…) collapse to ASCII digits

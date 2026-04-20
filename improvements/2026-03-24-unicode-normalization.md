@@ -43,13 +43,13 @@
 
 NFKC normalization catches a class of homograph attacks that every other check was completely blind to:
 
-**Fullwidth ASCII (U+FF01–U+FF5E):**
+**Fullwidth ASCII (U+FF01 to U+FF5E):**
 ```
 ｇｏｏｇｌｅ.com  →  google.com   (after NFKC)
 ｐａｙｐａｌ.com  →  paypal.com
 ```
 
-**Mathematical alphanumeric symbols (U+1D400–U+1D7FF):**
+**Mathematical alphanumeric symbols (U+1D400 to U+1D7FF):**
 ```
 𝗴𝗼𝗼𝗴𝗹𝗲.com  →  google.com   (bold)
 𝘨𝘰𝘰𝘨𝘭𝘦.com  →  google.com   (italic)

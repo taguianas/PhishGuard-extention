@@ -20,7 +20,7 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_title": "PhishGuard – Phishing Detector"
+    "default_title": "PhishGuard - Phishing Detector"
   },
 
   "options_page": "settings.html",
@@ -37,12 +37,14 @@
         "https://outlook.live.com/*",
         "https://outlook.office.com/*",
         "https://outlook.office365.com/*",
+        "https://outlook.com/*",
         "https://mail.yahoo.com/*",
         "https://mail.proton.me/*"
       ],
       "js": ["content.js"],
       "css": ["styles.css"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
 
@@ -50,7 +52,8 @@
     "storage",
     "alarms",
     "notifications",
-    "contextMenus"
+    "contextMenus",
+    "activeTab"
   ],
 
   "host_permissions": [
@@ -58,6 +61,7 @@
     "https://outlook.live.com/*",
     "https://outlook.office.com/*",
     "https://outlook.office365.com/*",
+    "https://outlook.com/*",
     "https://mail.yahoo.com/*",
     "https://mail.proton.me/*",
     "https://openphish.com/*",

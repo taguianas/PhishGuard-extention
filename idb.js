@@ -1,5 +1,5 @@
 /**
- * PhishGuard – IndexedDB Cache Layer
+ * PhishGuard - IndexedDB Cache Layer
  *
  * A minimal, promise-based wrapper around IndexedDB.
  * All four caches that previously lived in in-memory Maps now persist here

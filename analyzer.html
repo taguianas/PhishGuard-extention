@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PhishGuard - Analyzer</title>
+  <link rel="stylesheet" href="analyzer.css" />
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="an-header">
+    <div class="an-header-left">
+      <img src="icons/icon32.png" alt="PhishGuard" width="26" height="26" />
+      <div class="an-brand">
+        <span class="an-title">PhishGuard</span>
+        <span class="an-version">v2.0</span>
+      </div>
+    </div>
+    <div class="an-header-right" id="auth-area">
+      <!-- Populated by analyzer.js -->
+    </div>
+  </header>
+
+  <!-- Main layout -->
+  <div class="an-layout">
+
+    <!-- Left / Center: Analyzers -->
+    <main class="an-main">
+
+      <!-- Tabs -->
+      <nav class="an-tabs" role="tablist">
+        <button class="an-tab active" data-tab="url" role="tab" aria-selected="true">URL Analyzer</button>
+        <button class="an-tab"        data-tab="email" role="tab" aria-selected="false">Email Analyzer</button>
+      </nav>
+
+      <!-- URL Analyzer panel -->
+      <div class="an-panel active" id="tab-url" role="tabpanel">
+        <div class="an-input-group">
+          <label class="an-label" for="url-input">URL to analyze</label>
+          <div class="an-row">
+            <input
+              type="text"
+              id="url-input"
+              class="an-input"
+              placeholder="https://example.com  or paste any link..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="an-btn-primary" id="url-analyze-btn">Analyze</button>
+          </div>
+          <p class="an-hint">No sign-in required. Results are not stored unless you are signed in.</p>
+        </div>
+        <div id="url-results" class="an-results" aria-live="polite"></div>
+      </div>
+
+      <!-- Email Analyzer panel -->
+      <div class="an-panel" id="tab-email" role="tabpanel">
+        <div class="an-email-fields">
+          <div class="an-two-col">
+            <div class="an-input-group">
+              <label class="an-label" for="email-from">From</label>
+              <input type="text" id="email-from" class="an-input"
+                     placeholder="John Smith <john@example.com>" autocomplete="off" />
+            </div>
+            <div class="an-input-group">
+              <label class="an-label" for="email-replyto">Reply-To <span class="an-opt">(optional)</span></label>
+              <input type="text" id="email-replyto" class="an-input"
+                     placeholder="reply@otherdomain.com" autocomplete="off" />
+            </div>
+          </div>
+          <div class="an-input-group">
+            <label class="an-label" for="email-subject">Subject</label>
+            <input type="text" id="email-subject" class="an-input"
+                   placeholder="Email subject line..." autocomplete="off" />
+          </div>
+          <div class="an-input-group">
+            <label class="an-label" for="email-body">Email Body</label>
+            <textarea id="email-body" class="an-textarea" rows="7"
+                      placeholder="Paste the full email body here (plain text or HTML)..."></textarea>
+          </div>
+        </div>
+        <div class="an-row">
+          <button class="an-btn-primary" id="email-analyze-btn">Analyze Email</button>
+          <button class="an-btn-ghost"   id="email-clear-btn">Clear</button>
+        </div>
+        <p class="an-hint">No sign-in required. Results are not stored unless you are signed in.</p>
+        <div id="email-results" class="an-results" aria-live="polite"></div>
+      </div>
+
+    </main>
+
+    <!-- Right: History sidebar -->
+    <aside class="an-sidebar" id="history-sidebar">
+      <div class="an-sidebar-header">
+        <span class="an-sidebar-title">History</span>
+        <button class="an-btn-ghost sm" id="clear-history-btn">Clear all</button>
+      </div>
+      <div id="history-list" class="an-history-list">
+        <p class="an-empty-history" id="history-placeholder">Sign in to save and view your analysis history.</p>
+      </div>
+    </aside>
+
+  </div><!-- .an-layout -->
+
+  <!-- Auth Modal -->
+  <div class="an-overlay hidden" id="auth-modal" role="dialog" aria-modal="true" aria-label="Sign in or create account">
+    <div class="an-modal">
+      <button class="an-modal-close" id="modal-close" aria-label="Close">&times;</button>
+
+      <nav class="an-modal-tabs">
+        <button class="an-modal-tab active" data-modal-tab="signin">Sign In</button>
+        <button class="an-modal-tab"        data-modal-tab="signup">Create Account</button>
+      </nav>
+
+      <!-- Sign-in form -->
+      <div class="an-modal-panel active" id="panel-signin">
+        <div class="an-input-group">
+          <label class="an-label" for="si-username">Username</label>
+          <input type="text"     id="si-username" class="an-input" placeholder="Username" autocomplete="username" />
+        </div>
+        <div class="an-input-group">
+          <label class="an-label" for="si-password">Password</label>
+          <input type="password" id="si-password" class="an-input" placeholder="Password" autocomplete="current-password" />
+        </div>
+        <p class="an-error hidden" id="si-error"></p>
+        <button class="an-btn-primary full" id="si-submit">Sign In</button>
+      </div>
+
+      <!-- Sign-up form -->
+      <div class="an-modal-panel" id="panel-signup">
+        <div class="an-input-group">
+          <label class="an-label" for="su-username">Username</label>
+          <input type="text"     id="su-username" class="an-input" placeholder="Choose a username" autocomplete="username" />
+        </div>
+        <div class="an-input-group">
+          <label class="an-label" for="su-password">Password</label>
+          <input type="password" id="su-password" class="an-input" placeholder="Choose a password (min 6 chars)" autocomplete="new-password" />
+        </div>
+        <p class="an-error hidden" id="su-error"></p>
+        <button class="an-btn-primary full" id="su-submit">Create Account</button>
+      </div>
+
+      <p class="an-modal-note">All data is stored locally in your browser. No server is involved.</p>
+    </div>
+  </div>
+
+  <script type="module" src="analyzer.js"></script>
+</body>
+</html>

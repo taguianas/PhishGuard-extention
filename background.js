@@ -1,11 +1,11 @@
 /**
- * PhishGuard – Background Service Worker v2
+ * PhishGuard - Background Service Worker v2
  *
  * Improvements in this version:
- *   #1  Badge counter   – live threat count on the extension icon
- *   #2  Notifications   – desktop alert when a high-risk link is detected
- *   #3  Google Safe Browsing API – real-time URL reputation check
- *   #4  RDAP domain age – flag newly registered domains
+ *   #1  Badge counter   - live threat count on the extension icon
+ *   #2  Notifications   - desktop alert when a high-risk link is detected
+ *   #3  Google Safe Browsing API - real-time URL reputation check
+ *   #4  RDAP domain age - flag newly registered domains
  *
  * Existing features retained: OpenPhish feed, URLHaus, stats/log.
  */
@@ -45,7 +45,7 @@ let sessionHighRisk   = 0;
 let sessionSuspicious = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IMPROVEMENT #1 – Badge Counter
+// IMPROVEMENT #1 - Badge Counter
 // Shows a live count on the extension icon:
 //   Red   = high-risk links this session
 //   Orange = suspicious links (only if no high-risk)
@@ -69,7 +69,7 @@ function updateBadge() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IMPROVEMENT #2 – Desktop Notifications
+// IMPROVEMENT #2 - Desktop Notifications
 // Fires a system notification the first time a high-risk domain is seen
 // in any given hour. Respects the user's notification toggle in settings.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ async function notifyHighRisk(result) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IMPROVEMENT #3 – Google Safe Browsing API
+// IMPROVEMENT #3 - Google Safe Browsing API
 // Sends a single batch request for all URLs in one scan.
 // Results are cached per-URL for 30 minutes to preserve API quota.
 // The API key is stored in chrome.storage.sync via the Settings page.
@@ -182,7 +182,7 @@ async function checkGoogleSafeBrowsing(urls, apiKey) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IMPROVEMENT #4 – RDAP Domain Age Check
+// IMPROVEMENT #4 - RDAP Domain Age Check
 // Uses the public RDAP proxy (rdap.org) to find when a domain was registered.
 // Newly registered domains are a strong phishing signal:
 //   < 7 days  → +50 pts (high-risk on its own)
@@ -606,9 +606,18 @@ async function handleAnalyzeURLs(urls) {
     ? await checkGoogleSafeBrowsing(urls, settings.safeBrowsingApiKey)
     : new Set();
 
+  // ── Phase 1: heuristic + OpenPhish + Safe Browsing (per URL) ────────────
+  // Developer hosts (replit.dev, localhost, private IPs, etc.) skip the
+  // paid / rate-limited threat feed layers to avoid quota waste, but still
+  // pass through the free ones (OpenPhish, Safe Browsing): a genuinely
+  // malicious replit.dev URL flagged by Safe Browsing SHOULD still be
+  // promoted from "developer" to "high-risk".
+  const pending = [];
   for (const rawUrl of urls) {
     const analysis = analyzeURL(rawUrl);
     if (!analysis) continue;
+
+    const isDeveloper = analysis.riskLevel === 'developer';
 
     // Layer 1: OpenPhish community feed
     if (isInThreatFeed(analysis.domain)) {
@@ -626,16 +635,51 @@ async function handleAnalyzeURLs(urls) {
       analysis.safeBrowsingHit = true;
     }
 
-    // Layer 3: RDAP domain age (only for already-suspicious, saves API calls)
-    if (settings.domainAgeEnabled && analysis.score > 0
-        && !analysis.threatFeedHit && !analysis.safeBrowsingHit) {
-      const ageInfo = await checkDomainAge(analysis.domain);
-      applyDomainAgeScore(analysis, ageInfo);
-      if (ageInfo) analysis.domainAge = ageInfo;
+    pending.push({ rawUrl, analysis, isDeveloper });
+  }
+
+  // ── Phase 2: batch RDAP domain age lookup ──────────────────────────────
+  // Collect unique eligible domains first, then fire all RDAP calls in
+  // parallel. For an email with 20 links to the same domain this turns
+  // 20 sequential lookups (even if most were IDB cache hits) into 1
+  // network call + 19 fan-out no-ops. Independent domains also overlap
+  // their latency instead of queueing behind one another.
+  // Skipped for developer hosts: replit.dev is 7+ years old, querying RDAP
+  // would consume quota to learn something irrelevant to phishing risk.
+  if (settings.domainAgeEnabled) {
+    const rdapDomains = new Set();
+    for (const { analysis, isDeveloper } of pending) {
+      if (analysis.score > 0 && !isDeveloper
+          && !analysis.threatFeedHit && !analysis.safeBrowsingHit) {
+        rdapDomains.add(analysis.domain);
+      }
     }
 
+    if (rdapDomains.size > 0) {
+      const ageMap  = new Map();
+      const domains = [...rdapDomains];
+      const ageInfos = await Promise.all(domains.map(d => checkDomainAge(d)));
+      for (let i = 0; i < domains.length; i++) ageMap.set(domains[i], ageInfos[i]);
+
+      for (const { analysis, isDeveloper } of pending) {
+        if (isDeveloper || analysis.threatFeedHit || analysis.safeBrowsingHit) continue;
+        if (!ageMap.has(analysis.domain)) continue;
+        const ageInfo = ageMap.get(analysis.domain);
+        applyDomainAgeScore(analysis, ageInfo);
+        if (ageInfo) analysis.domainAge = ageInfo;
+      }
+
+      if (domains.length > 0) {
+        console.log(`[PhishGuard] RDAP batch: ${domains.length} unique domain(s) for ${pending.length} URL(s)`);
+      }
+    }
+  }
+
+  // ── Phase 3: per-URL paid / rate-limited layers + allowlist ────────────
+  for (const { rawUrl, analysis, isDeveloper } of pending) {
     // Layer 4: PhishTank - dedicated phishing database (on-demand per suspicious URL)
-    if (settings.phishTankEnabled && analysis.score > 0
+    // Skipped for developer hosts (see Layer 3 rationale).
+    if (settings.phishTankEnabled && analysis.score > 0 && !isDeveloper
         && !analysis.threatFeedHit && !analysis.safeBrowsingHit) {
       const ptHit = await checkPhishTank(rawUrl, settings.phishTankApiKey);
       if (ptHit) {
@@ -646,8 +690,11 @@ async function handleAnalyzeURLs(urls) {
       }
     }
 
-    // Layer 5: URLHaus on-demand (only for high-risk candidates, spare quota)
-    if (analysis.score >= 50 && !analysis.threatFeedHit && !analysis.safeBrowsingHit) {
+    // Layer 5: URLHaus on-demand (only for high-risk candidates, spare quota).
+    // Skipped for developer hosts: score never reaches 50 for pure developer
+    // hosts anyway, but the explicit skip makes the intent clear.
+    if (analysis.score >= 50 && !isDeveloper
+        && !analysis.threatFeedHit && !analysis.safeBrowsingHit) {
       const hit = await queryURLHaus(rawUrl);
       if (hit) {
         analysis.indicators.push({ score: 50, label: 'URL flagged by URLHaus (abuse.ch)' });
@@ -660,8 +707,9 @@ async function handleAnalyzeURLs(urls) {
     // Layer 6: VirusTotal (optional, free tier: 4 req/min / 500 req/day)
     // Only queried when URL is already suspicious from heuristics and no definitive
     // hit found yet. Catches zero-day phishing kits not yet in feed databases.
+    // Skipped for developer hosts to preserve the VT daily quota.
     if (settings.virusTotalEnabled && settings.virusTotalApiKey
-        && analysis.score > 0
+        && analysis.score > 0 && !isDeveloper
         && !analysis.threatFeedHit && !analysis.safeBrowsingHit
         && !analysis.urlhausHit   && !analysis.phishTankHit) {
       const vtResult = await checkVirusTotal(rawUrl, settings.virusTotalApiKey);
@@ -775,9 +823,13 @@ async function updateStats(results) {
       stats.highRisk++;
       sessionHighRisk++;
 
+      // Keep recentIndicators as {score, label} objects so the popup can
+      // display the score contribution alongside the label.
       for (const ind of r.indicators) {
-        if (!stats.recentIndicators.includes(ind.label))
-          stats.recentIndicators.unshift(ind.label);
+        if (!stats.recentIndicators.some(existing =>
+          (existing && existing.label ? existing.label : existing) === ind.label)) {
+          stats.recentIndicators.unshift({ score: ind.score, label: ind.label });
+        }
       }
       stats.recentIndicators = stats.recentIndicators.slice(0, 10);
 
@@ -787,7 +839,7 @@ async function updateStats(results) {
         domain:     r.domain,
         score:      r.score,
         riskLevel:  r.riskLevel,
-        indicators: r.indicators.map(i => i.label),
+        indicators: r.indicators.map(i => ({ score: i.score, label: i.label })),
         domainAge:  r.domainAge ? `${Math.floor(r.domainAge.ageInDays)} days old` : null,
       });
       stats.log = stats.log.slice(0, 200);
@@ -811,6 +863,7 @@ const EMAIL_PATTERNS = [
   'https://outlook.live.com/*',
   'https://outlook.office.com/*',
   'https://outlook.office365.com/*',
+  'https://outlook.com/*',
   'https://mail.yahoo.com/*',
   'https://mail.proton.me/*',
 ];
@@ -875,3 +928,31 @@ async function pruneAllCaches() {
   }
   refreshFeedIfNeeded();
 })();
+
+// ─── Context Menu: "Analyze link with PhishGuard" ─────────────────────────────
+// Right-click any link anywhere in Chrome to open the analyzer page prefilled
+// with that URL. No sign-in is required to run the analysis; the context menu
+// is just a shortcut into the existing analyzer flow.
+const PG_CTX_MENU_ID = 'phishguard-analyze-link';
+
+function registerContextMenu() {
+  // removeAll first so reloading the extension does not create duplicate items
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id:       PG_CTX_MENU_ID,
+      title:    'Analyze link with PhishGuard',
+      contexts: ['link'],
+    });
+  });
+}
+
+chrome.runtime.onInstalled.addListener(registerContextMenu);
+chrome.runtime.onStartup.addListener(registerContextMenu);
+
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId !== PG_CTX_MENU_ID || !info.linkUrl) return;
+  const target = chrome.runtime.getURL(
+    `analyzer.html?url=${encodeURIComponent(info.linkUrl)}`
+  );
+  chrome.tabs.create({ url: target });
+});

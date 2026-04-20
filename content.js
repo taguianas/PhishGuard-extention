@@ -1,5 +1,5 @@
 /**
- * PhishGuard – Gmail Content Script
+ * PhishGuard - Content Script (Gmail, Outlook, Yahoo, ProtonMail)
  * Monitors Gmail for opened emails, extracts links, requests analysis,
  * and injects visual warnings.
  */
@@ -39,9 +39,14 @@
     '.gE.iv.gt',
     '.ajA',
     '.gs',
-    // Outlook Web App
+    // Outlook Web App (multiple versions / layouts)
     '[class*="ReadingPaneHeader"]',
     '[class*="MessageHeader"]',
+    '[role="heading"][aria-level]',
+    '[class*="senderContainer"]',
+    '[class*="FromContainer"]',
+    '[class*="ItemHeader"]',
+    '[data-app-section="ConversationContainer"] [class*="header"]',
     // Yahoo Mail
     '[data-test-id="message-view-header"]',
     // ProtonMail
@@ -62,12 +67,21 @@
     '.ii.gt .a3s',
     '.ii.gt',
     '.adn.ads',
-    // Outlook Web App (OWA / office365 / outlook.live.com)
+    // Outlook Web App (OWA / office365 / outlook.live.com / outlook.com)
+    // Primary: ARIA label is stable across OWA redesigns
     '[aria-label="Message body"]',
-    '.wide-content-host',
+    // Fluent UI reading pane (new OWA 2024+)
+    '[data-app-section="ConversationContainer"] [role="document"]',
+    '[data-app-section="ConversationContainer"] [class*="body"]',
+    // Classic OWA / Office 365
     '[class*="ReadingPaneContent"] [class*="messageBody"]',
     '[class*="ReadingPaneContent"]',
-    '[data-app-section="ConversationContainer"] [class*="body"]',
+    '.wide-content-host',
+    // OWA iframe fallback: if the email body is in an iframe and
+    // all_frames is true, the content script runs inside that frame.
+    // In that case the body IS the top-level element.
+    'div[class*="allowTextSelection"]',
+    'div.customScrollBar[role="region"]',
     // Yahoo Mail
     '[data-test-id="message-view-body"]',
     '.msg-body',
@@ -207,6 +221,16 @@
         if (!seen.has(el)) { seen.add(el); results.push(el); }
       }
     }
+    // Iframe fallback: with all_frames enabled, the content script may be
+    // running inside an Outlook iframe whose body IS the email content.
+    // If no selectors matched and we are inside a frame, treat the <body>
+    // itself as the container (only if it has links to scan).
+    if (!results.length && window !== window.top) {
+      const body = document.body;
+      if (body && body.querySelectorAll('a[href]').length > 0) {
+        results.push(body);
+      }
+    }
     return results;
   }
 
@@ -231,19 +255,59 @@
   // -------------------------------------------------------------------
   function applyWarning(anchor, result) {
     anchor.setAttribute(PROCESSED_ATTR, 'true');
-    const isCritical = result.riskLevel === 'high-risk';
+    const isCritical  = result.riskLevel === 'high-risk';
+    const isDeveloper = result.riskLevel === 'developer';
 
-    anchor.classList.add(isCritical ? 'phishguard-high-risk' : 'phishguard-suspicious');
+    // Pick the right CSS class so the link outline matches the risk level:
+    // critical = red, suspicious = amber, developer = muted blue (informational).
+    const linkClass = isCritical   ? 'phishguard-high-risk'
+                    : isDeveloper  ? 'phishguard-developer'
+                    :                'phishguard-suspicious';
+    anchor.classList.add(linkClass);
 
+    // Each indicator renders with its score contribution so users see why a link
+    // was flagged. The raw label is stashed in data-indicator-label so feedback
+    // submission can still send the unformatted label back to the background.
     const indicatorLines = result.indicators
-      .map(i => `<li>${escapeHTML(i.label)}</li>`).join('');
+      .map(i => {
+        const label = escapeHTML(i.label);
+        const pts   = Number(i.score) || 0;
+        const sign  = pts >= 0 ? '+' : '';
+        return `<li data-indicator-label="${escapeAttr(i.label)}">`
+             + `<span class="phishguard-ind-label">${label}</span>`
+             + `<span class="phishguard-ind-score">${sign}${pts} pts</span>`
+             + `</li>`;
+      }).join('');
+
+    // Tooltip class modifier: warn-level (amber) for suspicious,
+    // dev-level (muted blue) for developer, no modifier for high-risk.
+    const tooltipMod = isCritical ? '' : isDeveloper ? ' dev-level' : ' warn-level';
+
+    const verdict = isCritical   ? 'High Risk'
+                  : isDeveloper  ? 'Developer'
+                  :                'Suspicious';
+
+    // Verdict text class picks the color for the header label
+    const verdictCls = isCritical  ? ''
+                     : isDeveloper ? ' dev'
+                     :               ' warn';
+
+    const adviceText = isCritical
+      ? 'Do not interact with this link. Report this email as phishing.'
+      : isDeveloper
+        ? 'Development / preview host: unless you expected this link, verify before entering credentials.'
+        : 'Exercise caution before clicking this link.';
+
+    const adviceCls = isCritical  ? ' critical'
+                    : isDeveloper ? ' info'
+                    :               '';
 
     const tooltip = document.createElement('div');
-    tooltip.className = 'phishguard-tooltip' + (isCritical ? '' : ' warn-level');
+    tooltip.className = 'phishguard-tooltip' + tooltipMod;
     tooltip.innerHTML = `
       <div class="phishguard-tooltip-header">
-        <span class="phishguard-verdict${isCritical ? '' : ' warn'}">
-          ${isCritical ? 'High Risk' : 'Suspicious'}
+        <span class="phishguard-verdict${verdictCls}">
+          ${verdict}
         </span>
         <span class="phishguard-score-pill">${result.score}/100</span>
       </div>
@@ -254,10 +318,8 @@
         </div>
         <span class="phishguard-indicators-label">Indicators</span>
         <ul>${indicatorLines}</ul>
-        <div class="phishguard-advice${isCritical ? ' critical' : ''}">
-          ${isCritical
-            ? 'Do not interact with this link. Report this email as phishing.'
-            : 'Exercise caution before clicking this link.'}
+        <div class="phishguard-advice${adviceCls}">
+          ${adviceText}
         </div>
         <div class="phishguard-feedback" data-phishguard-fb-url="${escapeAttr(result.url)}"
              data-phishguard-fb-domain="${escapeAttr(result.domain)}">
@@ -278,7 +340,7 @@
     wrapper.appendChild(tooltip);
 
     anchor.setAttribute('aria-label',
-      `PhishGuard: ${isCritical ? 'High risk' : 'Suspicious'} link : ${result.domain} (${result.score}/100)`);
+      `PhishGuard: ${verdict} link : ${result.domain} (${result.score}/100)`);
 
     anchor.parentNode.insertBefore(wrapper, anchor);
     wrapper.appendChild(anchor);
@@ -322,10 +384,13 @@
     const url    = container.getAttribute('data-phishguard-fb-url');
     const domain = container.getAttribute('data-phishguard-fb-domain');
 
-    // Collect indicator labels from the sibling <ul> in the tooltip
+    // Collect indicator labels from the sibling <ul> in the tooltip.
+    // We read data-indicator-label rather than textContent so we get the clean
+    // label (without the "+N pts" score pill that is rendered alongside it).
     const tooltipBody = container.closest('.phishguard-tooltip-body');
     const indicators  = tooltipBody
-      ? [...tooltipBody.querySelectorAll('ul li')].map(li => li.textContent.trim())
+      ? [...tooltipBody.querySelectorAll('ul li')].map(li =>
+          li.getAttribute('data-indicator-label') || li.textContent.trim())
       : [];
 
     // Send to background for storage
@@ -645,7 +710,9 @@
    * @returns {string|null} lowercase domain, e.g. "paypa1.com"
    */
   function extractSenderDomain(container) {
-    // Approach 1: Gmail renders the sender as <span class="gD" email="x@y.z">
+    // ── Platform-specific fast paths ──────────────────────────
+
+    // Gmail: <span class="gD" email="x@y.z">
     let node = container.parentElement;
     for (let depth = 0; depth < 8 && node && node.tagName !== 'BODY'; depth++, node = node.parentElement) {
       const gd = node.querySelector('.gD[email]');
@@ -654,12 +721,35 @@
         const domain = raw.split('@')[1];
         if (domain && domain.includes('.')) return domain;
       }
-      // Stop climbing at a known high-level Gmail wrapper to avoid
-      // picking up the sender from a different message in the thread
+      // Stop at known Gmail wrapper to avoid wrong thread sender
       if (node.classList.contains('nH') || node.classList.contains('adO')) break;
     }
 
-    // Approach 2: email-address pattern in known header-region selectors
+    // Outlook: sender shown in spans / buttons with title or aria-label
+    // containing the email address. Walk ancestors to find header region.
+    node = container.parentElement;
+    for (let depth = 0; depth < 10 && node && node.tagName !== 'BODY'; depth++, node = node.parentElement) {
+      // Look for elements Outlook uses to display the sender email
+      const candidates = node.querySelectorAll(
+        '[class*="senderContainer"] [title], ' +
+        '[class*="FromContainer"] [title], ' +
+        '[class*="ItemHeader"] [title], ' +
+        '[role="heading"] [title], ' +
+        'button[title*="@"], ' +
+        'span[title*="@"], ' +
+        '[aria-label*="@"]'
+      );
+      for (const el of candidates) {
+        if (container.contains(el)) continue;
+        const text = el.getAttribute('title') || el.getAttribute('aria-label') || '';
+        const m = text.match(/([\w.+%-]+@([\w.-]+\.[a-z]{2,}))/i);
+        if (m) return m[2].toLowerCase();
+      }
+    }
+
+    // ── Generic fallbacks (work on any platform) ─────────────
+
+    // Header-region selectors: search for email pattern in known header elements
     for (const sel of AUTH_HEADER_SELECTORS) {
       for (const el of document.querySelectorAll(sel)) {
         if (container.contains(el) || el.contains(container)) continue;
@@ -668,7 +758,7 @@
       }
     }
 
-    // Approach 3: walk ancestors, inspect sibling branches for "From:" line
+    // Walk ancestors, inspect sibling branches for "From:" line
     node = container.parentElement;
     for (let depth = 0; depth < 5 && node; depth++, node = node.parentElement) {
       for (const child of node.children) {
@@ -894,14 +984,16 @@
    * 'pending' links (sent to background but not yet resolved) are excluded.
    */
   function countProcessedLinks(container) {
-    let highRisk = 0, suspicious = 0, safe = 0;
+    let highRisk = 0, suspicious = 0, developer = 0, safe = 0;
     for (const a of container.querySelectorAll(`a[${PROCESSED_ATTR}]`)) {
       if (a.getAttribute(PROCESSED_ATTR) === 'pending') continue;
-      if (a.classList.contains('phishguard-high-risk'))    highRisk++;
+      if (a.classList.contains('phishguard-high-risk'))       highRisk++;
       else if (a.classList.contains('phishguard-suspicious')) suspicious++;
+      else if (a.classList.contains('phishguard-developer'))  developer++;
       else safe++;
     }
-    return { total: highRisk + suspicious + safe, highRisk, suspicious };
+    return { total: highRisk + suspicious + developer + safe,
+             highRisk, suspicious, developer };
   }
 
   /**
@@ -915,12 +1007,18 @@
     // Remove previous banner so we can re-render with updated counts
     container.querySelector('.' + BANNER_CLASS)?.remove();
 
+    // Banner severity priority: high-risk > suspicious > developer > safe.
+    // Developer links alone get their own informational banner (blue) rather
+    // than the green "no threats detected" banner, because there IS something
+    // to note (the link points to a dev environment).
     const level  = stats.highRisk > 0 ? 'high-risk'
                  : stats.suspicious > 0 ? 'suspicious'
+                 : stats.developer > 0 ? 'developer'
                  : 'safe';
-    const color  = level === 'high-risk' ? '#c0392b'
+    const color  = level === 'high-risk'  ? '#c0392b'
                  : level === 'suspicious' ? '#b87333'
-                 : '#2e7d52';
+                 : level === 'developer'  ? '#4a90d9'
+                 :                          '#2e7d52';
 
     let status;
     if (level === 'high-risk') {
@@ -929,6 +1027,8 @@
                ' : do not click flagged links';
     } else if (level === 'suspicious') {
       status = `${stats.suspicious} suspicious link${stats.suspicious > 1 ? 's' : ''} detected - verify before clicking`;
+    } else if (level === 'developer') {
+      status = `${stats.developer} developer/preview link${stats.developer > 1 ? 's' : ''} detected - low risk, verify if unexpected`;
     } else {
       status = `${stats.total} link${stats.total > 1 ? 's' : ''} scanned : no threats detected`;
     }
@@ -1058,7 +1158,7 @@
   const debouncedScan = debounce(scanEmailContainers, SCAN_DEBOUNCE_MS);
 
   // -------------------------------------------------------------------
-  // MutationObserver: react to Gmail dynamically loading email content
+  // MutationObserver: react to dynamically loaded email content
   // -------------------------------------------------------------------
   const observer = new MutationObserver((mutations) => {
     for (const m of mutations) {
@@ -1071,5 +1171,5 @@
   // Initial scan
   scanEmailContainers();
 
-  console.log('[PhishGuard] Active : monitoring Gmail for phishing links');
+  console.log('[PhishGuard] Active - monitoring email for phishing links');
 })();

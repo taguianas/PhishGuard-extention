@@ -1,5 +1,5 @@
 /**
- * PhishGuard – Popup
+ * PhishGuard - Popup
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -8,7 +8,23 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-export-csv').addEventListener('click', exportCSV);
   document.getElementById('btn-settings').addEventListener('click', () =>
     chrome.runtime.openOptionsPage());
+  document.getElementById('btn-open-analyzer').addEventListener('click', openAnalyzerForActiveTab);
 });
+
+// Opens analyzer.html; if the active tab is an http(s) page, prefills the
+// URL field so one click analyzes the page the user is currently looking at.
+// Falls back to opening an empty analyzer for chrome://, extension pages, etc.
+function openAnalyzerForActiveTab() {
+  const base = chrome.runtime.getURL('analyzer.html');
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tabUrl = tabs && tabs[0] && tabs[0].url;
+    const isWebUrl = typeof tabUrl === 'string' && /^https?:\/\//i.test(tabUrl);
+    const target = isWebUrl
+      ? `${base}?url=${encodeURIComponent(tabUrl)}`
+      : base;
+    chrome.tabs.create({ url: target });
+  });
+}
 
 // ── Load ──────────────────────────────────────────────────────────────────────
 async function loadStats() {
@@ -66,9 +82,28 @@ function renderIndicators(list) {
     ul.innerHTML = '<li class="pg-empty">No indicators recorded</li>';
     return;
   }
-  for (const text of list) {
+  for (const item of list) {
+    // Accept either a plain string (legacy log entries) or a {score, label}
+    // object (new format): both render, only the new format shows the pill.
+    const label = (item && typeof item === 'object') ? item.label : String(item);
+    const score = (item && typeof item === 'object' && typeof item.score === 'number')
+      ? item.score : null;
+
     const li = document.createElement('li');
-    li.textContent = text;
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'pg-ind-label';
+    labelSpan.textContent = label;
+    li.appendChild(labelSpan);
+
+    if (score !== null) {
+      const scoreSpan = document.createElement('span');
+      scoreSpan.className = 'pg-ind-score';
+      const sign = score >= 0 ? '+' : '';
+      scoreSpan.textContent = `${sign}${score} pts`;
+      li.appendChild(scoreSpan);
+    }
+
     ul.appendChild(li);
   }
 }
@@ -149,7 +184,16 @@ async function exportCSV() {
   const rows    = log.map(e => [
     e.timestamp, e.url, e.domain, e.riskLevel,
     e.score ?? '', e.domainAge || '',
-    (e.indicators || []).join(' | '),
+    (e.indicators || [])
+      .map(i => {
+        // Support legacy string[] entries and new {score, label} entries
+        if (i && typeof i === 'object') {
+          const sign = (i.score >= 0 ? '+' : '');
+          return `${i.label} (${sign}${i.score} pts)`;
+        }
+        return String(i);
+      })
+      .join(' | '),
   ]);
 
   const csv  = [headers, ...rows]
