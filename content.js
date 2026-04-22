@@ -316,6 +316,11 @@
           <span class="phishguard-domain-label">Domain</span>
           <span class="phishguard-domain-value">${escapeHTML(result.domain)}</span>
         </div>
+        ${result.expandedDomain && result.expandedDomain !== result.domain ? `
+        <div class="phishguard-domain-row">
+          <span class="phishguard-domain-label">Resolves to</span>
+          <span class="phishguard-domain-value">${escapeHTML(result.expandedDomain)}</span>
+        </div>` : ''}
         <span class="phishguard-indicators-label">Indicators</span>
         <ul>${indicatorLines}</ul>
         <div class="phishguard-advice${adviceCls}">

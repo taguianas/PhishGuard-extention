@@ -2,7 +2,7 @@
  * PhishGuard - IndexedDB Cache Layer
  *
  * A minimal, promise-based wrapper around IndexedDB.
- * All four caches that previously lived in in-memory Maps now persist here
+ * All caches that previously lived in in-memory Maps now persist here
  * across service-worker restarts:
  *
  *   Store name        Key             Value shape
@@ -10,12 +10,15 @@
  *   'rdap'            registeredDomain  { result, cachedAt }
  *   'safebrowsing'    url               { flagged, cachedAt }
  *   'phishtank'       url               { flagged, cachedAt }
+ *   'virustotal'      url               { result, cachedAt }
  *   'notifications'   domain            { lastNotifiedAt }
+ *   'webhooks'        url               { lastSentAt }
+ *   'shorteners'      shortUrl          { expandedUrl, cachedAt }
  */
 
 const DB_NAME    = 'phishguard-cache';
-const DB_VERSION = 2;
-const STORES     = ['rdap', 'safebrowsing', 'phishtank', 'notifications', 'virustotal'];
+const DB_VERSION = 4;
+const STORES     = ['rdap', 'safebrowsing', 'phishtank', 'notifications', 'virustotal', 'webhooks', 'shorteners'];
 
 /** Singleton DB connection promise: opened once, reused forever. */
 let _dbPromise = null;
@@ -111,8 +114,8 @@ export async function idbPrune(storeName, ttlMs) {
     req.onsuccess = (e) => {
       const cursor = e.target.result;
       if (!cursor) return resolve(deleted);
-      const { cachedAt, lastNotifiedAt } = cursor.value;
-      const age = cachedAt ?? lastNotifiedAt ?? Infinity;
+      const { cachedAt, lastNotifiedAt, lastSentAt } = cursor.value;
+      const age = cachedAt ?? lastNotifiedAt ?? lastSentAt ?? Infinity;
       if (age < cutoff) { cursor.delete(); deleted++; }
       cursor.continue();
     };

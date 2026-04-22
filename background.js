@@ -10,19 +10,23 @@
  * Existing features retained: OpenPhish feed, URLHaus, stats/log.
  */
 
-import { analyzeURL }                       from './urlAnalyzer.js';
+import { analyzeURL, SCORING }              from './urlAnalyzer.js';
 import { idbGet, idbSet, idbPrune }         from './idb.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const FEED_TTL_MS      = 6  * 60 * 60 * 1000;  // 6 h  - OpenPhish refresh
-const RDAP_CACHE_TTL   = 24 * 60 * 60 * 1000;  // 24 h - RDAP per-domain cache
-const SB_CACHE_TTL     = 30 * 60 * 1000;        // 30 m - Safe Browsing cache
-const PT_CACHE_TTL     = 60 * 60 * 1000;        // 1 h  - PhishTank cache
-const VT_CACHE_TTL     = 24 * 60 * 60 * 1000;  // 24 h - VirusTotal cache (free tier: 500 req/day)
-const NOTIFY_COOLDOWN  = 60 * 60 * 1000;        // 1 h  - dedup per domain
-const CACHE_PRUNE_MS   = 12 * 60 * 60 * 1000;  // 12 h - IDB pruning interval
-const FAIL_RETRY_TTL   =  5 * 60 * 1000;        // 5 m  - retry window after a failed API call
+const FEED_TTL_MS         = 6  * 60 * 60 * 1000;  // 6 h  - OpenPhish refresh
+const RDAP_CACHE_TTL      = 24 * 60 * 60 * 1000;  // 24 h - RDAP per-domain cache
+const SB_CACHE_TTL        = 30 * 60 * 1000;        // 30 m - Safe Browsing cache
+const PT_CACHE_TTL        = 60 * 60 * 1000;        // 1 h  - PhishTank cache
+const VT_CACHE_TTL        = 24 * 60 * 60 * 1000;  // 24 h - VirusTotal cache (free tier: 500 req/day)
+const NOTIFY_COOLDOWN     = 60 * 60 * 1000;        // 1 h  - dedup per domain
+const WEBHOOK_COOLDOWN_MS = 60 * 60 * 1000;        // 1 h  - webhook dedup per URL
+const WEBHOOK_TIMEOUT_MS  = 8 * 1000;              // 8 s  - webhook POST timeout
+const SHORTENER_TTL       = 24 * 60 * 60 * 1000;  // 24 h - shortener expansion cache
+const SHORTENER_TIMEOUT   = 6 * 1000;              // 6 s  - shortener unfurl timeout
+const CACHE_PRUNE_MS      = 12 * 60 * 60 * 1000;  // 12 h - IDB pruning interval
+const FAIL_RETRY_TTL      =  5 * 60 * 1000;        // 5 m  - retry window after a failed API call
 
 // TLDs with reliable RDAP registry support
 const RDAP_SUPPORTED_TLDS = new Set([
@@ -97,6 +101,76 @@ async function notifyHighRisk(result) {
     priority:           2,
     requireInteraction: false,
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIEM Webhook Integration
+// Posts high-risk detections as JSON to a user-configured webhook URL so they
+// can be ingested by Splunk HEC, Elastic, a custom SOC endpoint, or any HTTP
+// collector. The endpoint origin is requested as an optional_host_permission
+// when the user first saves the URL in Settings.
+//
+// Dedup: each exact URL is reported at most once per WEBHOOK_COOLDOWN_MS so a
+// newsletter with 50 copies of the same phishing link does not fan out 50
+// identical events. Uses the 'webhooks' IDB store.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function postToWebhook(result, settings) {
+  if (!settings.webhookEnabled) return;
+
+  const endpoint = (settings.webhookUrl || '').trim();
+  if (!endpoint) return;
+
+  // Dedup per URL
+  const now    = Date.now();
+  const cached = await idbGet('webhooks', result.url);
+  if (cached && now - cached.lastSentAt < WEBHOOK_COOLDOWN_MS) return;
+
+  // Build the payload. Keep indicator objects verbatim {score, label} so the
+  // receiver can reason about score contribution per rule.
+  const payload = {
+    source:    'phishguard',
+    version:   chrome.runtime.getManifest().version,
+    timestamp: new Date(now).toISOString(),
+    detection: {
+      url:        result.url,
+      domain:     result.domain,
+      expandedUrl:    result.expandedUrl    || null,
+      expandedDomain: result.expandedDomain || null,
+      score:      result.score,
+      riskLevel:  result.riskLevel,
+      indicators: (result.indicators || []).map(i => ({ score: i.score, label: i.label })),
+      domainAge:  result.domainAge || null,
+      feedHits: {
+        openphish:    !!result.threatFeedHit,
+        safeBrowsing: !!result.safeBrowsingHit,
+        phishTank:    !!result.phishTankHit,
+        urlHaus:      !!result.urlhausHit,
+        virusTotal:   !!result.vtHit,
+      },
+      allowlisted: !!result.allowlisted,
+    },
+  };
+
+  const headers = { 'Content-Type': 'application/json' };
+  const auth    = (settings.webhookAuthHeader || '').trim();
+  if (auth) headers['Authorization'] = auth; // e.g. "Bearer …" or "Splunk …"
+
+  try {
+    const res = await fetch(endpoint, {
+      method:  'POST',
+      headers,
+      body:    JSON.stringify(payload),
+      signal:  AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+      // no credentials: this is SIEM ingestion, not a cross-origin login
+    });
+    if (!res.ok) throw new Error(`webhook ${res.status}`);
+    await idbSet('webhooks', result.url, { lastSentAt: now });
+    console.log(`[PhishGuard] Webhook POST OK (${res.status}) for ${result.domain}`);
+  } catch (err) {
+    console.warn('[PhishGuard] Webhook POST failed:', err.message);
+    // Do NOT dedup on failure: the next scan should retry.
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -179,6 +253,129 @@ async function checkGoogleSafeBrowsing(urls, apiKey) {
   }
 
   return flagged;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// URL Shortener Expansion
+// Follows t.co, bit.ly, tinyurl.com, cutt.ly, is.gd, ow.ly, rebrand.ly (and
+// 15+ other common shorteners) to their real destinations by issuing a HEAD
+// request with redirect: 'follow'. The final URL is read off response.url,
+// then fed back into analyzeURL() so every downstream heuristic + threat feed
+// sees the real destination, not the opaque short-link.
+//
+// Requires runtime <all_urls> permission (any origin may be the redirect
+// target). Declared as optional_host_permissions in manifest.json and
+// requested by settings.js when the user enables the feature.
+//
+// Results cached per-short-link in the 'shorteners' IDB store for 24 h.
+// Failed calls are cached short (FAIL_RETRY_TTL) so transient errors don't
+// block retries.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function hasShortenerPermission() {
+  try {
+    return await chrome.permissions.contains({
+      origins: ['https://*/*', 'http://*/*'],
+    });
+  } catch {
+    return false;
+  }
+}
+
+async function expandShortener(shortUrl) {
+  const now    = Date.now();
+  const cached = await idbGet('shorteners', shortUrl);
+  if (cached?.failed) {
+    if (now - cached.cachedAt < FAIL_RETRY_TTL) return null;
+  } else if (cached && now - cached.cachedAt < SHORTENER_TTL) {
+    return cached.expandedUrl;
+  }
+
+  const store = async (value) => {
+    await idbSet('shorteners', shortUrl, { ...value, cachedAt: Date.now() });
+    return value.expandedUrl || null;
+  };
+
+  // HEAD first (no body). Many shorteners (t.co, bit.ly) support it.
+  // Fall back to GET with body cancelled for the few that reject HEAD.
+  const attempt = async (method) => {
+    const res = await fetch(shortUrl, {
+      method,
+      redirect: 'follow',
+      signal:   AbortSignal.timeout(SHORTENER_TIMEOUT),
+      // credentials: 'omit' keeps this from leaking cookies to the shortener
+      credentials: 'omit',
+    });
+    // Cancel the body stream we don't need
+    try { res.body?.cancel?.(); } catch {}
+    return res.url || null;
+  };
+
+  try {
+    let finalUrl = await attempt('HEAD');
+    if (!finalUrl || finalUrl === shortUrl) {
+      finalUrl = await attempt('GET');
+    }
+    if (!finalUrl || finalUrl === shortUrl) {
+      return store({ expandedUrl: null });
+    }
+    return store({ expandedUrl: finalUrl });
+  } catch (err) {
+    console.warn(`[PhishGuard] Shortener expansion failed for ${shortUrl}:`, err.message);
+    await idbSet('shorteners', shortUrl, { failed: true, cachedAt: Date.now() });
+    return null;
+  }
+}
+
+/**
+ * Merge a shortener's destination analysis into the original analysis.
+ * Replaces the generic URL_SHORTENER indicator with a specific "resolves to X"
+ * message naming the real destination, then folds in every destination
+ * indicator (deduped by label, score capped at 100). Preserves analysis.url
+ * and analysis.domain as the short-link values so the UI shows what the user
+ * actually sees in the email, with expandedUrl / expandedDomain added as
+ * extra context.
+ */
+function mergeShortenerExpansion(analysis, destAnalysis, expandedUrl) {
+  // Drop the generic URL_SHORTENER indicator and back out its score
+  const genericLabel = SCORING.URL_SHORTENER.label;
+  const idx = analysis.indicators.findIndex(i => i.label === genericLabel);
+  if (idx >= 0) {
+    const removed = analysis.indicators.splice(idx, 1)[0];
+    analysis.score = Math.max(0, analysis.score - removed.score);
+  }
+
+  // Add a specific "resolves to …" indicator. When the destination itself is
+  // safe (trusted domain), give it a 0-score informational note; otherwise a
+  // small transparency tax so a shortener is never strictly safer than its
+  // destination.
+  const expandLabel = destAnalysis.riskLevel === 'safe'
+    ? `URL shortener resolves to trusted destination: ${destAnalysis.domain}`
+    : `URL shortener hides destination: ${destAnalysis.domain}`;
+  const expandScore = destAnalysis.riskLevel === 'safe' ? 0 : 15;
+  analysis.indicators.push({ score: expandScore, label: expandLabel });
+  analysis.score = Math.min(analysis.score + expandScore, 100);
+
+  // Fold in every destination indicator (deduped)
+  for (const ind of destAnalysis.indicators) {
+    if (!analysis.indicators.some(x => x.label === ind.label)) {
+      analysis.indicators.push(ind);
+      analysis.score = Math.min(analysis.score + ind.score, 100);
+    }
+  }
+
+  // Recompute riskLevel from final score; preserve 'developer' when the
+  // destination is a dev host and score is still low.
+  if (destAnalysis.riskLevel === 'developer' && analysis.score < 60) {
+    analysis.riskLevel = 'developer';
+  } else {
+    analysis.riskLevel = analysis.score >= 60 ? 'high-risk'
+                       : analysis.score > 30  ? 'suspicious'
+                       : 'safe';
+  }
+
+  analysis.expandedUrl    = expandedUrl;
+  analysis.expandedDomain = destAnalysis.domain;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,6 +474,10 @@ async function loadSettings() {
     phishTankApiKey:      '',
     virusTotalEnabled:    true,
     virusTotalApiKey:     '',
+    webhookEnabled:       false,
+    webhookUrl:           '',
+    webhookAuthHeader:    '',
+    shortenerExpansionEnabled: true,
     ...data.phishguard_settings,
   };
 }
@@ -601,41 +802,83 @@ async function handleAnalyzeURLs(urls) {
   const settings = await loadSettings();
   const results  = [];
 
-  // Batch Safe Browsing request (one call for all URLs - efficient)
+  // ── Phase 0: parse every URL with the synchronous heuristic analyzer ────
+  const pending = [];
+  for (const rawUrl of urls) {
+    const analysis = analyzeURL(rawUrl);
+    if (!analysis) continue;
+    pending.push({ rawUrl, analysis });
+  }
+
+  // ── Phase 0b: shortener expansion ───────────────────────────────────────
+  // For every URL the analyzer flagged as a shortener (bit.ly, t.co, etc.),
+  // fetch the real destination in parallel, re-run the analyzer on it, and
+  // merge the indicators back into the original analysis. All downstream
+  // layers (OpenPhish, Safe Browsing, RDAP, PhishTank, URLHaus, VT) then see
+  // the real destination via urlForFeeds / domainForFeeds.
+  //
+  // Requires runtime host permission for <all_urls> since the redirect
+  // target is unknown a priori. Skipped silently if the user never granted
+  // that permission in Settings.
+  if (settings.shortenerExpansionEnabled) {
+    const shortenerTargets = pending.filter(p => p.analysis.isShortener);
+    if (shortenerTargets.length > 0 && await hasShortenerPermission()) {
+      const expansions = await Promise.all(
+        shortenerTargets.map(p => expandShortener(p.rawUrl))
+      );
+      let expandedCount = 0;
+      for (let i = 0; i < shortenerTargets.length; i++) {
+        const expanded = expansions[i];
+        if (!expanded || expanded === shortenerTargets[i].rawUrl) continue;
+        const destAnalysis = analyzeURL(expanded);
+        if (!destAnalysis) continue;
+        mergeShortenerExpansion(shortenerTargets[i].analysis, destAnalysis, expanded);
+        expandedCount++;
+      }
+      if (expandedCount > 0) {
+        console.log(`[PhishGuard] Shorteners: expanded ${expandedCount}/${shortenerTargets.length} link(s)`);
+      }
+    }
+  }
+
+  // ── Effective URL / domain for every downstream threat feed layer ──────
+  // If a shortener was expanded, feeds see the real destination. Otherwise
+  // they fall back to the raw URL / parsed domain.
+  for (const p of pending) {
+    p.urlForFeeds    = p.analysis.expandedUrl    || p.rawUrl;
+    p.domainForFeeds = p.analysis.expandedDomain || p.analysis.domain;
+  }
+
+  // ── Batch Safe Browsing across all effective URLs (one call total) ─────
   const sbFlagged = (settings.safeBrowsingEnabled && settings.safeBrowsingApiKey)
-    ? await checkGoogleSafeBrowsing(urls, settings.safeBrowsingApiKey)
+    ? await checkGoogleSafeBrowsing(pending.map(p => p.urlForFeeds), settings.safeBrowsingApiKey)
     : new Set();
 
-  // ── Phase 1: heuristic + OpenPhish + Safe Browsing (per URL) ────────────
+  // ── Phase 1: OpenPhish + Safe Browsing ─────────────────────────────────
   // Developer hosts (replit.dev, localhost, private IPs, etc.) skip the
   // paid / rate-limited threat feed layers to avoid quota waste, but still
   // pass through the free ones (OpenPhish, Safe Browsing): a genuinely
   // malicious replit.dev URL flagged by Safe Browsing SHOULD still be
   // promoted from "developer" to "high-risk".
-  const pending = [];
-  for (const rawUrl of urls) {
-    const analysis = analyzeURL(rawUrl);
-    if (!analysis) continue;
+  for (const p of pending) {
+    const { analysis, urlForFeeds, domainForFeeds } = p;
+    p.isDeveloper = analysis.riskLevel === 'developer';
 
-    const isDeveloper = analysis.riskLevel === 'developer';
-
-    // Layer 1: OpenPhish community feed
-    if (isInThreatFeed(analysis.domain)) {
+    // Layer 1: OpenPhish community feed (checks expanded domain)
+    if (isInThreatFeed(domainForFeeds)) {
       analysis.indicators.push({ score: 50, label: 'Domain in threat intelligence feed (OpenPhish)' });
       analysis.score     = Math.min(analysis.score + 50, 100);
       analysis.riskLevel = 'high-risk';
       analysis.threatFeedHit = true;
     }
 
-    // Layer 2: Google Safe Browsing
-    if (sbFlagged.has(rawUrl)) {
+    // Layer 2: Google Safe Browsing (checks expanded URL)
+    if (sbFlagged.has(urlForFeeds)) {
       analysis.indicators.push({ score: 60, label: 'URL flagged by Google Safe Browsing' });
       analysis.score     = 100;
       analysis.riskLevel = 'high-risk';
       analysis.safeBrowsingHit = true;
     }
-
-    pending.push({ rawUrl, analysis, isDeveloper });
   }
 
   // ── Phase 2: batch RDAP domain age lookup ──────────────────────────────
@@ -648,10 +891,10 @@ async function handleAnalyzeURLs(urls) {
   // would consume quota to learn something irrelevant to phishing risk.
   if (settings.domainAgeEnabled) {
     const rdapDomains = new Set();
-    for (const { analysis, isDeveloper } of pending) {
+    for (const { analysis, isDeveloper, domainForFeeds } of pending) {
       if (analysis.score > 0 && !isDeveloper
           && !analysis.threatFeedHit && !analysis.safeBrowsingHit) {
-        rdapDomains.add(analysis.domain);
+        rdapDomains.add(domainForFeeds);
       }
     }
 
@@ -661,10 +904,10 @@ async function handleAnalyzeURLs(urls) {
       const ageInfos = await Promise.all(domains.map(d => checkDomainAge(d)));
       for (let i = 0; i < domains.length; i++) ageMap.set(domains[i], ageInfos[i]);
 
-      for (const { analysis, isDeveloper } of pending) {
+      for (const { analysis, isDeveloper, domainForFeeds } of pending) {
         if (isDeveloper || analysis.threatFeedHit || analysis.safeBrowsingHit) continue;
-        if (!ageMap.has(analysis.domain)) continue;
-        const ageInfo = ageMap.get(analysis.domain);
+        if (!ageMap.has(domainForFeeds)) continue;
+        const ageInfo = ageMap.get(domainForFeeds);
         applyDomainAgeScore(analysis, ageInfo);
         if (ageInfo) analysis.domainAge = ageInfo;
       }
@@ -676,12 +919,12 @@ async function handleAnalyzeURLs(urls) {
   }
 
   // ── Phase 3: per-URL paid / rate-limited layers + allowlist ────────────
-  for (const { rawUrl, analysis, isDeveloper } of pending) {
+  for (const { analysis, isDeveloper, urlForFeeds } of pending) {
     // Layer 4: PhishTank - dedicated phishing database (on-demand per suspicious URL)
     // Skipped for developer hosts (see Layer 3 rationale).
     if (settings.phishTankEnabled && analysis.score > 0 && !isDeveloper
         && !analysis.threatFeedHit && !analysis.safeBrowsingHit) {
-      const ptHit = await checkPhishTank(rawUrl, settings.phishTankApiKey);
+      const ptHit = await checkPhishTank(urlForFeeds, settings.phishTankApiKey);
       if (ptHit) {
         analysis.indicators.push({ score: 55, label: 'URL confirmed in PhishTank phishing database' });
         analysis.score     = Math.min(analysis.score + 55, 100);
@@ -695,7 +938,7 @@ async function handleAnalyzeURLs(urls) {
     // hosts anyway, but the explicit skip makes the intent clear.
     if (analysis.score >= 50 && !isDeveloper
         && !analysis.threatFeedHit && !analysis.safeBrowsingHit) {
-      const hit = await queryURLHaus(rawUrl);
+      const hit = await queryURLHaus(urlForFeeds);
       if (hit) {
         analysis.indicators.push({ score: 50, label: 'URL flagged by URLHaus (abuse.ch)' });
         analysis.score     = 100;
@@ -712,7 +955,7 @@ async function handleAnalyzeURLs(urls) {
         && analysis.score > 0 && !isDeveloper
         && !analysis.threatFeedHit && !analysis.safeBrowsingHit
         && !analysis.urlhausHit   && !analysis.phishTankHit) {
-      const vtResult = await checkVirusTotal(rawUrl, settings.virusTotalApiKey);
+      const vtResult = await checkVirusTotal(urlForFeeds, settings.virusTotalApiKey);
       if (vtResult) {
         if (vtResult.malicious >= 3) {
           analysis.indicators.push({
@@ -747,8 +990,11 @@ async function handleAnalyzeURLs(urls) {
 
     results.push(analysis);
 
-    // Fire notification (non-blocking)
-    if (analysis.riskLevel === 'high-risk') notifyHighRisk(analysis);
+    // Fire notification + SIEM webhook (non-blocking)
+    if (analysis.riskLevel === 'high-risk') {
+      notifyHighRisk(analysis);
+      postToWebhook(analysis, settings);
+    }
   }
 
   await updateStats(results);
@@ -906,14 +1152,16 @@ chrome.alarms.onAlarm.addListener(alarm => {
 
 async function pruneAllCaches() {
   try {
-    const [rdapDel, sbDel, ptDel, vtDel, notifDel] = await Promise.all([
+    const [rdapDel, sbDel, ptDel, vtDel, notifDel, whDel, shDel] = await Promise.all([
       idbPrune('rdap',          RDAP_CACHE_TTL),
       idbPrune('safebrowsing',  SB_CACHE_TTL),
       idbPrune('phishtank',     PT_CACHE_TTL),
       idbPrune('virustotal',    VT_CACHE_TTL),
       idbPrune('notifications', NOTIFY_COOLDOWN),
+      idbPrune('webhooks',      WEBHOOK_COOLDOWN_MS),
+      idbPrune('shorteners',    SHORTENER_TTL),
     ]);
-    console.log(`[PhishGuard] Cache pruned : rdap:${rdapDel} sb:${sbDel} pt:${ptDel} vt:${vtDel} notif:${notifDel} entries removed`);
+    console.log(`[PhishGuard] Cache pruned : rdap:${rdapDel} sb:${sbDel} pt:${ptDel} vt:${vtDel} notif:${notifDel} webhook:${whDel} shortener:${shDel} entries removed`);
   } catch (err) {
     console.warn('[PhishGuard] Cache prune failed:', err.message);
   }

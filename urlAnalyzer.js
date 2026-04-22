@@ -117,7 +117,7 @@ const SUSPICIOUS_PATH_KEYWORDS = [
 const BIDI_CONTROL_RE = /[\u202A-\u202E\u2066-\u2069\u200E\u200F]/;
 
 // ─── Scoring table ────────────────────────────────────────────────────────────
-const SCORING = {
+export const SCORING = {
   IP_ADDRESS:            { score: 60, label: 'IP address used as domain' },
   URL_SHORTENER:         { score: 35, label: 'URL shortener service detected' },
   DOMAIN_IMPERSONATION:  { score: 35, label: 'Domain impersonation detected' },
@@ -611,6 +611,7 @@ export function analyzeURL(rawUrl) {
   const { hostname, protocol, href, pathname, search, port } = parsed;
   const indicators = [];
   let   totalScore = 0;
+  let   isShortener = false;
 
   const add = (entry) => { indicators.push(entry); totalScore += entry.score; };
 
@@ -705,8 +706,12 @@ export function analyzeURL(rawUrl) {
     add(SCORING.IP_ADDRESS);
 
   // ── 2. URL shortener ──────────────────────────────────────────────────────
-  if (checkURLShortener(normHostname))
+  // Flag the indicator AND expose isShortener on the result so the background
+  // layer knows to fetch the real destination and re-analyze it.
+  if (checkURLShortener(normHostname)) {
     add(SCORING.URL_SHORTENER);
+    isShortener = true;
+  }
 
   // ── 3. Domain impersonation / typosquatting ───────────────────────────────
   // normHostname: fullwidth/math-script brand names (ｐａｙｐａｌ) collapse to
@@ -832,5 +837,5 @@ export function analyzeURL(rawUrl) {
     : totalScore <  60 ? 'suspicious'
     : 'high-risk';
 
-  return { url: href, domain: hostname, score: totalScore, riskLevel, indicators };
+  return { url: href, domain: hostname, score: totalScore, riskLevel, indicators, isShortener };
 }

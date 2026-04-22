@@ -339,6 +339,8 @@ Every improvement shipped to this repository is documented in [`improvements/`](
 | 2026-04-15 | [Scoring explainability - per-indicator score pills in tooltip and popup](./improvements/2026-04-15-scoring-explainability.md) |
 | 2026-04-19 | [Developer risk level - reduce false positives on replit.dev, glitch.me, localhost, private IPs](./improvements/2026-04-19-developer-risk-level.md) |
 | 2026-04-20 | [Batch RDAP requests - dedupe unique domains and run lookups in parallel](./improvements/2026-04-20-batch-rdap-requests.md) |
+| 2026-04-21 | [SIEM webhook integration - POST high-risk detections as JSON to Splunk / Elastic / custom SOC endpoints](./improvements/2026-04-21-siem-webhook-integration.md) |
+| 2026-04-21 | [URL shortener expansion - follow bit.ly / t.co / tinyurl / cutt.ly redirects so heuristics and feeds see the real destination](./improvements/2026-04-21-url-shortener-expansion.md) |
 
 ---
 

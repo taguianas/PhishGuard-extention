@@ -11,6 +11,10 @@ const DEFAULTS = {
   phishTankApiKey:      '',
   virusTotalEnabled:    true,
   virusTotalApiKey:     '',
+  webhookEnabled:       false,
+  webhookUrl:           '',
+  webhookAuthHeader:    '',
+  shortenerExpansionEnabled: true,
 };
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
@@ -24,6 +28,11 @@ const ptKeyInput   = document.getElementById('pt-api-key');
 const vtKeyInput   = document.getElementById('vt-api-key');
 const sbStatus     = document.getElementById('sb-status');
 const vtStatus     = document.getElementById('vt-status');
+const toggleWH     = document.getElementById('toggle-webhook');
+const whUrlInput   = document.getElementById('webhook-url');
+const whAuthInput  = document.getElementById('webhook-auth');
+const whStatus     = document.getElementById('webhook-status');
+const toggleShort  = document.getElementById('toggle-shortener');
 const saveBanner   = document.getElementById('save-banner');
 
 // ── Load ──────────────────────────────────────────────────────────────────────
@@ -36,12 +45,17 @@ async function loadSettings() {
   toggleSB.checked     = s.safeBrowsingEnabled;
   togglePT.checked     = s.phishTankEnabled;
   toggleVT.checked     = s.virusTotalEnabled;
+  toggleWH.checked     = s.webhookEnabled;
+  toggleShort.checked  = s.shortenerExpansionEnabled;
   sbKeyInput.value     = s.safeBrowsingApiKey  || '';
   ptKeyInput.value     = s.phishTankApiKey     || '';
   vtKeyInput.value     = s.virusTotalApiKey    || '';
+  whUrlInput.value     = s.webhookUrl          || '';
+  whAuthInput.value    = s.webhookAuthHeader   || '';
 
   validateSBKey(s.safeBrowsingApiKey);
   validateVTKey(s.virusTotalApiKey);
+  validateWebhookUrl(s.webhookUrl);
 }
 
 // ── Save ──────────────────────────────────────────────────────────────────────
@@ -52,12 +66,54 @@ async function saveSettings() {
     safeBrowsingEnabled:  toggleSB.checked,
     phishTankEnabled:     togglePT.checked,
     virusTotalEnabled:    toggleVT.checked,
+    webhookEnabled:       toggleWH.checked,
+    shortenerExpansionEnabled: toggleShort.checked,
     safeBrowsingApiKey:   sbKeyInput.value.trim(),
     phishTankApiKey:      ptKeyInput.value.trim(),
     virusTotalApiKey:     vtKeyInput.value.trim(),
+    webhookUrl:           whUrlInput.value.trim(),
+    webhookAuthHeader:    whAuthInput.value.trim(),
   };
+
+  // If the webhook is enabled with a valid URL, request host permission for
+  // its origin. Without this, the service-worker fetch() would fail CORS-style.
+  if (s.webhookEnabled && s.webhookUrl) {
+    const origin = webhookOrigin(s.webhookUrl);
+    if (origin) {
+      try {
+        const granted = await chrome.permissions.request({ origins: [origin] });
+        if (!granted) {
+          whStatus.textContent = 'Permission for this origin was denied. Webhook disabled.';
+          whStatus.className   = 'pg-api-status err';
+          s.webhookEnabled     = false;
+          toggleWH.checked     = false;
+        }
+      } catch (err) {
+        console.warn('[PhishGuard Settings] permission request failed:', err);
+      }
+    }
+  }
+
+  // Shortener expansion needs access to any origin (the redirect target is
+  // unknown until we follow it). Request the broad host permission only when
+  // the user enables the toggle. If denied, flip the toggle back off.
+  if (s.shortenerExpansionEnabled) {
+    try {
+      const granted = await chrome.permissions.request({
+        origins: ['https://*/*', 'http://*/*'],
+      });
+      if (!granted) {
+        s.shortenerExpansionEnabled = false;
+        toggleShort.checked         = false;
+      }
+    } catch (err) {
+      console.warn('[PhishGuard Settings] shortener permission request failed:', err);
+    }
+  }
+
   await chrome.storage.sync.set({ phishguard_settings: s });
   validateSBKey(s.safeBrowsingApiKey);
+  validateWebhookUrl(s.webhookUrl);
   showBanner();
 }
 
@@ -69,11 +125,16 @@ async function resetSettings() {
   toggleSB.checked     = DEFAULTS.safeBrowsingEnabled;
   togglePT.checked     = DEFAULTS.phishTankEnabled;
   toggleVT.checked     = DEFAULTS.virusTotalEnabled;
+  toggleWH.checked     = DEFAULTS.webhookEnabled;
+  toggleShort.checked  = DEFAULTS.shortenerExpansionEnabled;
   sbKeyInput.value     = '';
   ptKeyInput.value     = '';
   vtKeyInput.value     = '';
+  whUrlInput.value     = '';
+  whAuthInput.value    = '';
   validateSBKey('');
   validateVTKey('');
+  validateWebhookUrl('');
   showBanner();
 }
 
@@ -95,6 +156,34 @@ function validateVTKey(key) {
   vtStatus.className   = 'pg-api-status ' + (ok ? 'ok' : 'err');
 }
 
+function webhookOrigin(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+    return `${u.protocol}//${u.host}/*`;
+  } catch {
+    return null;
+  }
+}
+
+function validateWebhookUrl(url) {
+  if (!url) { whStatus.textContent = ''; whStatus.className = 'pg-api-status'; return; }
+  let parsed;
+  try { parsed = new URL(url); }
+  catch {
+    whStatus.textContent = 'Not a valid URL.';
+    whStatus.className   = 'pg-api-status err';
+    return;
+  }
+  if (parsed.protocol !== 'https:') {
+    whStatus.textContent = 'Webhook URL must use HTTPS.';
+    whStatus.className   = 'pg-api-status err';
+    return;
+  }
+  whStatus.textContent = `Webhook active: ${parsed.origin}`;
+  whStatus.className   = 'pg-api-status ok';
+}
+
 // ── Reveal toggles ────────────────────────────────────────────────────────────
 function addReveal(btnId, inputEl) {
   document.getElementById(btnId)?.addEventListener('click', () => {
@@ -104,9 +193,11 @@ function addReveal(btnId, inputEl) {
 addReveal('btn-reveal',    sbKeyInput);
 addReveal('btn-reveal-pt', ptKeyInput);
 addReveal('btn-reveal-vt', vtKeyInput);
+addReveal('btn-reveal-wh', whAuthInput);
 
 sbKeyInput.addEventListener('input', () => validateSBKey(sbKeyInput.value.trim()));
 vtKeyInput.addEventListener('input', () => validateVTKey(vtKeyInput.value.trim()));
+whUrlInput.addEventListener('input', () => validateWebhookUrl(whUrlInput.value.trim()));
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 document.getElementById('btn-save') .addEventListener('click', saveSettings);

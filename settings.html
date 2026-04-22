@@ -205,6 +205,97 @@
     </div>
   </div>
 
+  <!-- URL Shortener Expansion -->
+  <div class="pg-section">
+    <div class="pg-section-header no-body">
+      <div>
+        <div class="pg-section-title">URL Shortener Expansion</div>
+        <div class="pg-section-desc">
+          Follow links through <code>bit.ly</code>, <code>t.co</code>,
+          <code>tinyurl.com</code>, <code>cutt.ly</code>, <code>is.gd</code>,
+          <code>ow.ly</code>, <code>rebrand.ly</code> and 15 other known
+          shorteners so heuristics see the real destination, not the short link.
+          Requires permission to access any origin (for the redirect target),
+          requested the first time you enable it. Results cached for 24 hours.
+        </div>
+      </div>
+      <label class="pg-toggle" title="Enable shortener expansion">
+        <input type="checkbox" id="toggle-shortener" />
+        <span class="pg-toggle-track"></span>
+      </label>
+    </div>
+  </div>
+
+  <!-- SIEM Webhook -->
+  <div class="pg-section">
+    <div class="pg-section-header">
+      <div>
+        <div class="pg-section-title">SIEM Webhook</div>
+        <div class="pg-section-desc">
+          POST every high-risk detection as JSON to a webhook URL so it can be
+          ingested by Splunk HEC, Elastic, or a custom SOC endpoint.
+          Each detection URL is sent at most once per hour (dedup window).
+        </div>
+      </div>
+      <label class="pg-toggle" title="Enable SIEM webhook">
+        <input type="checkbox" id="toggle-webhook" />
+        <span class="pg-toggle-track"></span>
+      </label>
+    </div>
+    <div class="pg-section-body">
+      <div class="pg-field-row">
+        <label class="pg-field-label" for="webhook-url">Webhook URL</label>
+        <div class="pg-input-group">
+          <input type="url" id="webhook-url" class="pg-input"
+                 placeholder="https://your-siem.example.com/collector"
+                 autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="pg-api-status" id="webhook-status"></div>
+        <p class="pg-field-hint">
+          Must be HTTPS. The extension will request permission for this origin
+          the first time you save a new URL.
+        </p>
+      </div>
+      <div class="pg-field-row">
+        <label class="pg-field-label" for="webhook-auth">Authorization header (optional)</label>
+        <div class="pg-input-group">
+          <input type="password" id="webhook-auth" class="pg-input"
+                 placeholder="Bearer eyJ... or Splunk &lt;token&gt;"
+                 autocomplete="off" spellcheck="false" />
+          <button class="pg-btn-icon" id="btn-reveal-wh">&#128065;</button>
+        </div>
+        <p class="pg-field-hint">
+          Sent as the <code>Authorization</code> header on every POST. Leave blank
+          if your endpoint authenticates via URL token or IP allowlist.
+        </p>
+      </div>
+      <details class="pg-details">
+        <summary>Example payload</summary>
+<pre class="pg-code">{
+  "source": "phishguard",
+  "version": "2.0.0",
+  "timestamp": "2026-04-20T14:32:11.284Z",
+  "detection": {
+    "url":       "https://paypa1-secure.tk/login",
+    "domain":    "paypa1-secure.tk",
+    "score":     85,
+    "riskLevel": "high-risk",
+    "indicators": [
+      { "score": 65, "label": "Brand 'paypal' in subdomain" },
+      { "score": 20, "label": "TLD on malicious list" }
+    ],
+    "domainAge": null,
+    "feedHits": {
+      "openphish": false, "safeBrowsing": true,
+      "phishTank": false, "urlHaus": false, "virusTotal": false
+    },
+    "allowlisted": false
+  }
+}</pre>
+      </details>
+    </div>
+  </div>
+
   <!-- Domain Allowlist -->
   <div class="pg-section">
     <div class="pg-section-header">
